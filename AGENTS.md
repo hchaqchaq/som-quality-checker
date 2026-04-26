@@ -3,7 +3,7 @@
 ## Project Scope
 - This repo is a pandas-based SOM Excel quality checker in active notebook-first development.
 - Canonical validation behavior is in `som_analyzer.ipynb`; `som_analyze.py` is only a read/print smoke script.
-- `main.py` is a separate Textual UI prototype with inline demo data (not connected to validation output yet).
+- `main.py` launches the PyQt desktop app for running analysis, previewing results, exporting output, and browsing run history.
 
 ## Architecture and Data Flow
 - Input workbook is hardcoded: `data/Working file - Coforization -20.04.xlsx`.
@@ -30,18 +30,17 @@
 - Use repo-relative paths (`data/...`) to keep notebook/script behavior consistent.
 
 ## Dependencies and Integrations
-- Runtime deps in `pyproject.toml`: `pandas`, `openpyxl`, `textual`; Python `>=3.12`.
+- Runtime deps in `pyproject.toml`: `pandas`, `openpyxl`, `PyQt6`; Python `>=3.12`.
 - `openpyxl` is required for Excel IO; avoid switching engine unless intentional.
 - `uv.lock` indicates `uv` workflow is expected for reproducible environments.
 
 ## Developer Workflows
 - Install/sync environment: `uv sync`
 - Smoke load Excel file: `uv run python som_analyze.py`
-- Run UI prototype: `uv run python main.py`
+- Run desktop app: `uv run python main.py`
 - Notebook workflow: execute `som_analyzer.ipynb` cells in order; later cells depend on earlier fail masks/constants.
 
 ## Guidance for Future Agent Changes
 - Follow the existing extension pattern: constant list -> validator function -> fail mask -> add to `Check` -> append reason in `Comment`.
 - Keep current behavior stable when refactoring notebook logic into modules (especially `normalize`, regex checks, and comment composition).
 - Do not silently change input/output file names under `data/`.
-

@@ -1,0 +1,21 @@
+[project]
+name = "som-analyze"
+version = "0.1.0"
+description = "SOM Excel analyzer with validation history and Textual TUI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "pandas>=2.2.0",
+    "textual>=0.60.0",
+    "xlsxwriter>=3.2.9",
+]
+
+[project.scripts]
+som-analyze = "som_analyze.tui.app:run_app"
+som-analyze-smoke = "som_analyze.smoke:main"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+

@@ -1,29 +1,12 @@
-from textual.app import App
-from textual.widgets import DataTable
-import pandas as pd
+from pathlib import Path
+import sys
+from importlib import import_module
 
-
-class TableApp(App):
-    def compose(self):
-        yield DataTable()
-
-    def on_mount(self):
-        table = self.query_one(DataTable)
-
-        # Example DataFrame
-        df = pd.DataFrame({
-            "Name": ["Alice", "Bob"],
-            "Age": [25, 30],
-            "City": ["Paris", "London"]
-        })
-
-        # Add columns
-        table.add_columns(*df.columns)
-
-        # Add rows
-        for row in df.itertuples(index=False):
-            table.add_row(*row)
-
+PROJECT_ROOT = Path(__file__).resolve().parent
+PACKAGE_SRC = PROJECT_ROOT / "som_analyze" / "src"
+if str(PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SRC))
 
 if __name__ == "__main__":
-    TableApp().run()
+    run_app = import_module("som_analyze.tui.app").run_app
+    run_app()

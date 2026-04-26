@@ -13,15 +13,17 @@
   - `fail_COLUMN_LENGTH` via `CHAR_PATTERN_REGEX` (`6 chars + two spaces + 2 chars`)
   - `fail_COLUMN_LENGTH_12` via `check_column_length(... == CHAR_LENGTH)`
   - `fail_CONTACTED` via `check_column_against_allowed_values` with lowercased allowed values
+  - `fail_COLUMN_LOCATION` via `is_valid_location` using `_LOCATION_REGEX` signals on `LOCATION_COLUMNS`
 - Row score is aggregated into `df_normalized["Check"]` as integer sum of all fail masks.
 - Row explanation is aggregated into `df_normalized["Comment"]` using `build_comment_for_row(index)` and joined with `" | "` when multiple conditions fail.
 - Current notebook export writes a filtered subset to `data/failed_rows.xlsx` (`Check == 6`).
 
 ## Project-Specific Conventions
 - Keep validation-driving constants centralized near the top of the notebook:
-  - `WANTED_COLUMNS`, `EMAIL_COLUMNS`, `CHAR_LENGTH_COLUMNS`, `CHAR_LENGTH_COLUMN_12`, `CONTACTED_ALLOWED_VALUES`.
+  - `WANTED_COLUMNS`, `LOCATION_COLUMNS`, `EMAIL_COLUMNS`, `CHAR_LENGTH_COLUMNS`, `CHAR_LENGTH_COLUMN_12`, `CONTACTED_ALLOWED_VALUES`.
 - Preserve output columns `Check` and `Comment` whenever adding/changing rules.
 - For category checks (for example `Contacted`), normalize with `strip().lower()` before membership tests.
+- For location fields, keep validation through `is_valid_location` (regex-signal based), not just non-empty checks.
 - New rules should emit both:
   - a boolean fail mask used in `Check` aggregation
   - a human-readable reason appended in `build_comment_for_row`

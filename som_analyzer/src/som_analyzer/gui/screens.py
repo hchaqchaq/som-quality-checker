@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..analysis.runner import RunResult, export_result, run_analysis
-from ..config import DEFAULT_INPUT_FILE, DEFAULT_OUTPUT_FILE, PREVIEW_ROWS
+from ..config import PREVIEW_ROWS
 from .app import SomAnalyzeController
 
 
@@ -148,7 +148,7 @@ class WelcomePage(QWidget):
         input_row = QHBoxLayout()
         self.input_file = QLineEdit("")
         self.input_file.setReadOnly(True)
-        self.input_file.setPlaceholderText("Choose an input workbook or use the app default")
+        self.input_file.setPlaceholderText("Choose an input workbook")
         self.pick_input_button = QPushButton("Choose Input File")
         self.pick_input_button.setObjectName("accentButton")
         input_row.addWidget(self.input_file)
@@ -159,7 +159,7 @@ class WelcomePage(QWidget):
         output_row = QHBoxLayout()
         self.output_dir = QLineEdit("")
         self.output_dir.setReadOnly(True)
-        self.output_dir.setPlaceholderText("Choose an output folder or use the app default")
+        self.output_dir.setPlaceholderText("Choose an output folder")
         self.pick_output_button = QPushButton("Choose Output Folder")
         self.pick_output_button.setObjectName("accentButton")
         output_row.addWidget(self.output_dir)
@@ -243,7 +243,7 @@ class WelcomePage(QWidget):
         selected_file, _ = QFileDialog.getOpenFileName(
             self,
             "Choose input workbook",
-            str(Path(self.input_file.text().strip() or DEFAULT_INPUT_FILE).parent),
+            str(Path(self.input_file.text().strip()).parent if self.input_file.text().strip() else Path.home()),
             "Excel files (*.xlsx *.xls *.xlsm)",
         )
         if selected_file:
@@ -254,7 +254,7 @@ class WelcomePage(QWidget):
         selected_dir = QFileDialog.getExistingDirectory(
             self,
             "Choose output folder",
-            self.output_dir.text().strip() or str(DEFAULT_OUTPUT_FILE.parent),
+            self.output_dir.text().strip() or str(Path.home()),
         )
         if selected_dir:
             self.output_dir.setText(selected_dir)
@@ -279,9 +279,14 @@ class WelcomePage(QWidget):
         if self._run_thread is not None:
             return
 
-        input_path = self.input_file.text().strip() or str(DEFAULT_INPUT_FILE)
-        output_dir = self.output_dir.text().strip() or str(DEFAULT_OUTPUT_FILE.parent)
-        output_path = str(Path(output_dir) / DEFAULT_OUTPUT_FILE.name)
+        input_path = self.input_file.text().strip()
+        output_path = self.output_dir.text().strip()
+        if not input_path:
+            self._set_status("Choose an input workbook before running analysis.", level="warning")
+            return
+        if not output_path:
+            self._set_status("Choose an output folder before running analysis.", level="warning")
+            return
 
         self.result_path_value.clear()
         self._set_status("Analysis started...")

@@ -8,8 +8,6 @@ from typing import Literal
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "som_analyzer.db"
-DEFAULT_INPUT_FILE = DATA_DIR / "Working file - Coforization -20.04.xlsx"
-DEFAULT_OUTPUT_FILE = DATA_DIR / "output.xlsx"
 PREVIEW_ROWS = 25
 
 WANTED_COLUMNS = [

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from ..analysis.runner import RunResult, export_result, run_analysis
-from ..config import DB_PATH, DEFAULT_INPUT_FILE, DEFAULT_OUTPUT_FILE
+from ..config import DB_PATH
 from ..db.repository import delete_run, get_run_columns, initialize_schema, list_runs, open_connection
 from .styles import APP_STYLESHEET
 
@@ -28,16 +28,15 @@ class SomAnalyzeController:
             self.connection.close()
             self.connection = None
 
-    def run_current_analysis(self, input_file: str | None = None) -> RunResult:
-        resolved_input = input_file or str(DEFAULT_INPUT_FILE)
-        result = run_analysis(resolved_input) if not self.connection else run_analysis(resolved_input, self.connection)
+    def run_current_analysis(self, input_file: str) -> RunResult:
+        result = run_analysis(input_file) if not self.connection else run_analysis(input_file, self.connection)
         self.current_result = result
         return result
 
-    def export_current_result(self, output_file: str | None = None) -> Path:
+    def export_current_result(self, output_file: str) -> Path:
         if self.current_result is None:
             raise RuntimeError("No analysis result to export")
-        return export_result(self.current_result, output_file or DEFAULT_OUTPUT_FILE)
+        return export_result(self.current_result, output_file)
 
     def history_runs(self):
         if self.connection is None:

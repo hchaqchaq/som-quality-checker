@@ -13,8 +13,6 @@ from .loader import load_excel
 from .validator import RuleResult, build_default_rules, build_scope_mask, normalize
 from ..config import (
     DB_PATH,
-    DEFAULT_INPUT_FILE,
-    DEFAULT_OUTPUT_FILE,
     SCOPE_FILTERS,
     WANTED_COLUMNS,
 )
@@ -42,10 +40,10 @@ class RunResult:
 
 
 def run_analysis(
-    input_path: Path | str | None = DEFAULT_INPUT_FILE,
+    input_path: Path | str,
     connection: sqlite3.Connection | None = None,
 ) -> RunResult:
-    resolved_input = input_path or DEFAULT_INPUT_FILE
+    resolved_input = Path(input_path)
     started_perf = perf_counter()
     started_at = datetime.now(timezone.utc)
 
@@ -94,7 +92,7 @@ def run_analysis(
             started_at=started_at.isoformat(),
             finished_at=finished_at.isoformat(),
             duration_s=duration_s,
-            input_file=str(Path(resolved_input)),
+            input_file=str(resolved_input),
             exported_file=None,
             rows_total=int(len(final_df)),
             rows_in_scope=int(len(df_filtered)),
@@ -117,7 +115,7 @@ def run_analysis(
 
     return RunResult(
         run_id=run_id,
-        input_file=Path(resolved_input),
+        input_file=resolved_input,
         started_at=started_at,
         finished_at=finished_at,
         duration_s=duration_s,
@@ -128,7 +126,7 @@ def run_analysis(
     )
 
 
-def export_result(result: RunResult, output_path: Path | str = DEFAULT_OUTPUT_FILE) -> Path:
+def export_result(result: RunResult, output_path: Path | str) -> Path:
     target = _build_export_target(result.input_file, output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     result.final_df.to_excel(target, index=False, engine="xlsxwriter", merge_cells=False)

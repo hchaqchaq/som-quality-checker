@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..config import DEFAULT_INPUT_FILE, WANTED_COLUMNS
+from ..config import WANTED_COLUMNS
 
 
 class LoadError(Exception):
     """Raised when an input workbook cannot be loaded or validated."""
 
 
-def load_excel(path: Path | str = DEFAULT_INPUT_FILE) -> pd.DataFrame:
+def load_excel(path: Path | str) -> pd.DataFrame:
     file_path = Path(path)
     if not file_path.exists():
         raise LoadError(f"Input file not found: {file_path}")

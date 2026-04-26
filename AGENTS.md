@@ -6,7 +6,8 @@
 - `main.py` launches the PyQt desktop app for running analysis, previewing results, exporting output, and browsing run history.
 
 ## Architecture and Data Flow
-- Input workbook is hardcoded: `data/Working file - Coforization -20.04.xlsx`.
+- Input workbook is user-selected in the desktop app and passed explicitly to the analyzer.
+- Output location is user-selected in the desktop app and passed explicitly to export.
 - `normalize(df, WANTED_COLUMNS)` casts selected columns to `str` and strips whitespace before checks.
 - Validation runs as boolean fail masks:
   - `fail_EMAIL_COLUMNS` via `EMAIL_REGEX`
@@ -16,7 +17,7 @@
   - `fail_COLUMN_LOCATION` via `is_valid_location` using `_LOCATION_REGEX` signals on `LOCATION_COLUMNS`
 - Row score is aggregated into `df_normalized["Check"]` as integer sum of all fail masks.
 - Row explanation is aggregated into `df_normalized["Comment"]` using `build_comment_for_row(index)` and joined with `" | "` when multiple conditions fail.
-- Current notebook export writes a filtered subset to `data/failed_rows.xlsx` (`Check == 6`).
+- Current notebook workflow expects `INPUT_FILE` and `OUTPUT_FILE` to be set explicitly before execution.
 
 ## Project-Specific Conventions
 - Keep validation-driving constants centralized near the top of the notebook:
@@ -27,7 +28,7 @@
 - New rules should emit both:
   - a boolean fail mask used in `Check` aggregation
   - a human-readable reason appended in `build_comment_for_row`
-- Use repo-relative paths (`data/...`) to keep notebook/script behavior consistent.
+- Do not add hardcoded workbook or output paths; pass input and output paths explicitly.
 
 ## Dependencies and Integrations
 - Runtime deps in `pyproject.toml`: `pandas`, `openpyxl`, `PyQt6`; Python `>=3.12`.
@@ -36,11 +37,11 @@
 
 ## Developer Workflows
 - Install/sync environment: `uv sync`
-- Smoke load Excel file: `uv run python som_analyze.py`
+- Smoke load Excel file: `uv run python som_analyze.py <input.xlsx>`
 - Run desktop app: `uv run python main.py`
 - Notebook workflow: execute `som_analyzer.ipynb` cells in order; later cells depend on earlier fail masks/constants.
 
 ## Guidance for Future Agent Changes
 - Follow the existing extension pattern: constant list -> validator function -> fail mask -> add to `Check` -> append reason in `Comment`.
 - Keep current behavior stable when refactoring notebook logic into modules (especially `normalize`, regex checks, and comment composition).
-- Do not silently change input/output file names under `data/`.
+- Keep input/output file paths user-driven in app, scripts, and notebook workflow.

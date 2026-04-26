@@ -8,6 +8,8 @@ This repository includes a modular analyzer package in `som_analyzer/`.
 uv run python main.py
 ```
 
+The desktop app requires the user to choose an input workbook and an output folder before analysis starts.
+
 ## Package-local workflow
 
 ```powershell
@@ -21,6 +23,6 @@ Pop-Location
 
 ```powershell
 Push-Location som_analyzer
-uv run som-analyze-smoke
+uv run som-analyze-smoke "C:\path\to\input.xlsx"
 Pop-Location
 ```

@@ -42,13 +42,94 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     for statement in all_statements():
         connection.execute(statement)
 
-    # Backward-compatible migration for existing databases created before exported_file existed.
+    _migrate_runs_exported_file_nullable(connection)
+    connection.commit()
+
+
+def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None:
     cursor = connection.execute("PRAGMA table_info(runs)")
-    run_columns = {str(row[1]) for row in cursor.fetchall()}
+    rows = cursor.fetchall()
+    run_columns = {str(row[1]) for row in rows}
     if "exported_file" not in run_columns:
         connection.execute("ALTER TABLE runs ADD COLUMN exported_file TEXT")
+        return
+
+    exported_file_info = next(row for row in rows if str(row[1]) == "exported_file")
+    is_not_null = int(exported_file_info[3]) == 1
+    if not is_not_null:
+        return
 
     connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("ALTER TABLE runs RENAME TO runs_old")
+    for statement in all_statements():
+        if "CREATE TABLE IF NOT EXISTS runs" in statement:
+            connection.execute(statement)
+
+    connection.execute(
+        """
+        INSERT INTO runs (
+            id,
+            started_at,
+            finished_at,
+            duration_s,
+            input_file,
+            exported_file,
+            rows_total,
+            rows_in_scope,
+            rows_failed,
+            status,
+            error_message
+        )
+        SELECT
+            id,
+            started_at,
+            finished_at,
+            duration_s,
+            input_file,
+            exported_file,
+            rows_total,
+            rows_in_scope,
+            rows_failed,
+            status,
+            error_message
+        FROM runs_old
+        """
+    )
+    connection.execute("DROP TABLE runs_old")
+
+    cursor = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_columns'")
+    if cursor.fetchone() is not None:
+        connection.execute("ALTER TABLE run_columns RENAME TO run_columns_old")
+        for statement in all_statements():
+            if "CREATE TABLE IF NOT EXISTS run_columns" in statement:
+                connection.execute(statement)
+        connection.execute(
+            """
+            INSERT INTO run_columns (
+                id,
+                run_id,
+                rule_name,
+                column_name,
+                fail_count
+            )
+            SELECT
+                id,
+                run_id,
+                rule_name,
+                column_name,
+                fail_count
+            FROM run_columns_old
+            """
+        )
+        connection.execute("DROP TABLE run_columns_old")
+
+    for statement in all_statements():
+        if "CREATE INDEX" in statement:
+            connection.execute(statement)
+
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = ON")
 
 
 def insert_run(

@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
+APP_BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT.parent))
+APP_LOGO_PATH = APP_BUNDLE_ROOT / "logo.png"
+
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SOM Quality Checker"
+else:
+    DATA_DIR = PROJECT_ROOT / "data"
+
 DB_PATH = DATA_DIR / "som_analyzer.db"
 PREVIEW_ROWS = 25
 

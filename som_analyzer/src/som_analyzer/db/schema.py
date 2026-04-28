@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at TEXT NOT NULL,
     duration_s REAL NOT NULL,
     input_file TEXT NOT NULL,
-    exported_file TEXT NOt NULL,
+    exported_file TEXT,
     rows_total INTEGER NOT NULL,
     rows_in_scope INTEGER NOT NULL,
     rows_failed INTEGER NOT NULL,

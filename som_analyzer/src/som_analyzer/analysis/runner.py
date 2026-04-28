@@ -15,6 +15,7 @@ from ..config import (
     DB_PATH,
     SCOPE_FILTERS,
     WANTED_COLUMNS,
+    ScopeFilterDefinition,
 )
 from ..db.repository import (
     ColumnRecord,
@@ -41,6 +42,7 @@ class RunResult:
 
 def run_analysis(
     input_path: Path | str,
+    scope_filters: tuple[ScopeFilterDefinition, ...] | None = None,
     connection: sqlite3.Connection | None = None,
 ) -> RunResult:
     resolved_input = Path(input_path)
@@ -53,12 +55,13 @@ def run_analysis(
     source_df["Comment"] = pd.Series(dtype="string")
 
     df_normalized = normalize(source_df, WANTED_COLUMNS)
-    mask_selected = build_scope_mask(df_normalized, SCOPE_FILTERS)
+    active_filters = SCOPE_FILTERS if scope_filters is None else scope_filters
+    mask_selected = build_scope_mask(df_normalized, active_filters)
 
     df_filtered = df_normalized[mask_selected].copy()
     df_rest = df_normalized[~mask_selected].copy()
-    df_rest["Comment"] = "No comment || Out of scope"
-    df_rest["Check"] = "Out of scope"
+    df_rest["Comment"] = "Out of filters"
+    df_rest["Check"] = "Out of filters"
 
     rule_results = [rule.evaluate(df_filtered) for rule in build_default_rules()]
 

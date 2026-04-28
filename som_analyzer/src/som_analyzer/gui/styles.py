@@ -48,6 +48,17 @@ QWidget#heroPanel QLabel {{
     color: #ffffff;
 }}
 
+QWidget#sidebarLogoFrame {{
+    background-color: #f8fbff;
+    border: 1px solid #f0c23b;
+    border-radius: 14px;
+}}
+
+QLabel#sidebarLogo {{
+    background-color: transparent;
+    padding: 0;
+}}
+
 QWidget#sectionCard {{
     background-color: #ffffff;
     border: 1px solid #d7e3f8;
@@ -112,6 +123,33 @@ QLineEdit {{
 
 QLineEdit:read-only {{
     background-color: #f8fbff;
+}}
+
+QComboBox {{
+    background-color: #ffffff;
+    border: 1px solid #b8cdee;
+    border-radius: 10px;
+    padding: 9px 12px;
+    color: #123f8c;
+    selection-background-color: #f0c23b;
+}}
+
+QComboBox:hover {{
+    border-color: #215fbe;
+}}
+
+QComboBox:disabled {{
+    background-color: #f8fbff;
+    color: #7f9dcc;
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: #ffffff;
+    border: 1px solid #b8cdee;
+    color: #123f8c;
+    selection-background-color: #f0c23b;
+    selection-color: #123f8c;
+    outline: none;
 }}
 
 QListWidget {{

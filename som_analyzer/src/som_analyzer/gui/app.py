@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from ..analysis.runner import RunResult, export_result, run_analysis
-from ..config import DB_PATH
+from ..config import APP_LOGO_PATH, DB_PATH
 from ..db.repository import delete_run, get_run_columns, initialize_schema, list_runs, open_connection
 from .styles import APP_STYLESHEET
 
@@ -29,7 +29,7 @@ class SomAnalyzeController:
             self.connection = None
 
     def run_current_analysis(self, input_file: str) -> RunResult:
-        result = run_analysis(input_file) if not self.connection else run_analysis(input_file, self.connection)
+        result = run_analysis(input_file) if not self.connection else run_analysis(input_file, connection=self.connection)
         self.current_result = result
         return result
 
@@ -55,11 +55,14 @@ class SomAnalyzeController:
 
 
 def run_app() -> None:
+    from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
 
     from .screens import MainWindow
 
     qt_app = QApplication(sys.argv)
+    if APP_LOGO_PATH.exists():
+        qt_app.setWindowIcon(QIcon(str(APP_LOGO_PATH)))
     qt_app.setStyleSheet(APP_STYLESHEET)
     controller = SomAnalyzeController()
     controller.startup()

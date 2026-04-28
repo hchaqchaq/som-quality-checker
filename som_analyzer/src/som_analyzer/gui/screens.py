@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import cast
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -26,22 +28,131 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..analysis.loader import load_excel
 from ..analysis.runner import RunResult, export_result, run_analysis
-from ..config import PREVIEW_ROWS
+from ..config import APP_LOGO_PATH, PREVIEW_ROWS, ScopeFilterDefinition
 from .app import SomAnalyzeController
+
+
+class CheckableComboBox(QComboBox):
+    def __init__(self, placeholder: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setModel(QStandardItemModel(self))
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setPlaceholderText(placeholder)
+        self._keep_popup_open = False
+        self.view().pressed.connect(self._toggle_item)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def hidePopup(self) -> None:
+        if self._keep_popup_open:
+            self._keep_popup_open = False
+            return
+        super().hidePopup()
+
+    def set_values(self, values: list[str]) -> None:
+        model = cast(QStandardItemModel, self.model())
+        model.clear()
+        self._append_item("All", None, checked=True)
+        for value in values:
+            self._append_item(value, value, checked=False)
+        self.setEnabled(True)
+        self._update_display_text()
+
+    def reset(self, message: str) -> None:
+        model = cast(QStandardItemModel, self.model())
+        model.clear()
+        self._append_item(message, None, checked=False, checkable=False)
+        self.setEnabled(False)
+        self.lineEdit().setText(message)
+
+    def checked_values(self) -> list[str]:
+        model = cast(QStandardItemModel, self.model())
+        selected: list[str] = []
+        for row in range(model.rowCount()):
+            item = model.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) is None:
+                continue
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        return selected
+
+    def has_loaded_values(self) -> bool:
+        model = cast(QStandardItemModel, self.model())
+        return model.rowCount() > 0 and model.item(0).text() == "All"
+
+    def _append_item(
+        self,
+        text: str,
+        value: str | None,
+        checked: bool,
+        checkable: bool = True,
+    ) -> None:
+        item = QStandardItem(text)
+        flags = Qt.ItemFlag.ItemIsEnabled
+        if checkable:
+            flags |= Qt.ItemFlag.ItemIsUserCheckable
+        item.setFlags(flags)
+        item.setData(value, Qt.ItemDataRole.UserRole)
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        cast(QStandardItemModel, self.model()).appendRow(item)
+
+    def _toggle_item(self, index) -> None:
+        item = cast(QStandardItemModel, self.model()).itemFromIndex(index)
+        if not item or not item.isCheckable():
+            return
+
+        self._keep_popup_open = True
+        next_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+        item.setCheckState(next_state)
+        self._sync_all_item(item)
+        self._update_display_text()
+
+    def _sync_all_item(self, changed_item: QStandardItem) -> None:
+        model = cast(QStandardItemModel, self.model())
+        all_item = model.item(0)
+        if changed_item is all_item and changed_item.checkState() == Qt.CheckState.Checked:
+            for row in range(1, model.rowCount()):
+                model.item(row).setCheckState(Qt.CheckState.Unchecked)
+            return
+
+        if changed_item is not all_item and changed_item.checkState() == Qt.CheckState.Checked:
+            all_item.setCheckState(Qt.CheckState.Unchecked)
+            return
+
+        any_checked = any(model.item(row).checkState() == Qt.CheckState.Checked for row in range(1, model.rowCount()))
+        if not any_checked:
+            all_item.setCheckState(Qt.CheckState.Checked)
+
+    def _update_display_text(self) -> None:
+        values = self.checked_values()
+        if not values:
+            self.lineEdit().setText("All")
+            return
+        if len(values) <= 2:
+            self.lineEdit().setText(", ".join(values))
+            return
+        self.lineEdit().setText(f"{len(values)} selected")
 
 
 class AnalysisWorker(QObject):
     finished = pyqtSignal(object, str, str)
 
-    def __init__(self, input_path: str, output_path: str) -> None:
+    def __init__(
+        self,
+        input_path: str,
+        output_path: str,
+        scope_filters: tuple[ScopeFilterDefinition, ...],
+    ) -> None:
         super().__init__()
         self.input_path = input_path
         self.output_path = output_path
+        self.scope_filters = scope_filters
 
     def run(self) -> None:
         try:
-            result = run_analysis(self.input_path)
+            result = run_analysis(self.input_path, scope_filters=self.scope_filters)
             exported_path = export_result(result, self.output_path)
             self.finished.emit(result, str(exported_path), "")
         except Exception as exc:  # pragma: no cover - worker error path
@@ -53,6 +164,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("SOM Quality Checker")
+        if APP_LOGO_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_LOGO_PATH)))
         self.resize(1180, 760)
         self.setMinimumSize(980, 660)
 
@@ -70,9 +183,31 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(12, 14, 12, 14)
         sidebar_layout.setSpacing(10)
 
+        if APP_LOGO_PATH.exists():
+            logo_frame = QFrame()
+            logo_frame.setObjectName("sidebarLogoFrame")
+            logo_frame_layout = QVBoxLayout(logo_frame)
+            logo_frame_layout.setContentsMargins(10, 10, 10, 10)
+            logo_frame_layout.setSpacing(0)
+
+            logo = QLabel()
+            logo.setObjectName("sidebarLogo")
+            logo.setPixmap(
+                QPixmap(str(APP_LOGO_PATH)).scaled(
+                    126,
+                    126,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            logo_frame_layout.addWidget(logo)
+            sidebar_layout.addWidget(logo_frame)
+
         nav_title = QLabel("SOM Checker")
         nav_title.setObjectName("sectionTitle")
         nav_title.setStyleSheet("color: #ffffff;")
+        nav_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         sidebar_layout.addWidget(nav_title)
 
         self.menu = QListWidget()
@@ -84,7 +219,7 @@ class MainWindow(QMainWindow):
 
         title_width = nav_title.sizeHint().width()
         menu_width = max(self.menu.sizeHintForColumn(0) + 34, 92)
-        content_width = max(title_width, menu_width)
+        content_width = max(title_width, menu_width, 142)
         self.menu.setFixedWidth(content_width)
         sidebar.setFixedWidth(content_width + sidebar_layout.contentsMargins().left() + sidebar_layout.contentsMargins().right())
         layout.addWidget(sidebar)
@@ -123,6 +258,7 @@ class WelcomePage(QWidget):
         self._run_thread: QThread | None = None
         self._run_worker: AnalysisWorker | None = None
         self.status_level = "info"
+        self.filter_columns = ("Plant", "Contacted", "Info completed")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -166,9 +302,41 @@ class WelcomePage(QWidget):
         output_row.addWidget(self.pick_output_button)
         input_card_layout.addLayout(output_row)
 
-        self.run_button = QPushButton("Run Analysis")
-        input_card_layout.addWidget(self.run_button)
         layout.addWidget(input_card)
+
+        filters_card = self._create_section_card(
+            "Filters",
+            "Quality checks run only on rows matching these selected values.",
+        )
+        filters_layout = cast(QVBoxLayout, filters_card.layout())
+        filters_grid = QGridLayout()
+        filters_grid.setHorizontalSpacing(12)
+        filters_grid.setVerticalSpacing(8)
+
+        self.plant_filter = self._create_filter_combo("Choose a workbook first")
+        self.contacted_filter = self._create_filter_combo("Choose a workbook first")
+        self.info_completed_filter = self._create_filter_combo("Choose a workbook first")
+        self.filter_combos = {
+            "Plant": self.plant_filter,
+            "Contacted": self.contacted_filter,
+            "Info completed": self.info_completed_filter,
+        }
+
+        for column_index, (label, combo) in enumerate(
+            (
+                ("Plant", self.plant_filter),
+                ("Contacted", self.contacted_filter),
+                ("Info completed", self.info_completed_filter),
+            )
+        ):
+            label_widget = QLabel(label)
+            filters_grid.addWidget(label_widget, 0, column_index)
+            filters_grid.addWidget(combo, 1, column_index)
+
+        filters_layout.addLayout(filters_grid)
+        self.run_button = QPushButton("Run Analysis")
+        filters_layout.addWidget(self.run_button)
+        layout.addWidget(filters_card)
 
         self.loading_label = QLabel("Analyzing... please wait")
         self.loading_label.setObjectName("sectionHint")
@@ -208,12 +376,19 @@ class WelcomePage(QWidget):
         layout.setStretch(1, 0)
         layout.setStretch(2, 0)
         layout.setStretch(3, 0)
-        layout.setStretch(4, 1)
-        layout.setStretch(5, 0)
+        layout.setStretch(4, 0)
+        layout.setStretch(5, 1)
+        layout.setStretch(6, 0)
 
         self.pick_input_button.clicked.connect(self._pick_input_file)
         self.pick_output_button.clicked.connect(self._pick_output_directory)
         self.run_button.clicked.connect(self._on_run)
+
+    def _create_filter_combo(self, placeholder: str) -> CheckableComboBox:
+        combo = CheckableComboBox(placeholder)
+        combo.setEnabled(False)
+        combo.reset(placeholder)
+        return combo
 
     def _create_section_card(self, title: str, hint: str) -> QFrame:
         card = QFrame()
@@ -248,7 +423,7 @@ class WelcomePage(QWidget):
         )
         if selected_file:
             self.input_file.setText(selected_file)
-            self._set_status(f"Selected input file: {selected_file}")
+            self._load_filter_values(selected_file)
 
     def _pick_output_directory(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
@@ -275,6 +450,47 @@ class WelcomePage(QWidget):
 
         table.resizeColumnsToContents()
 
+    def _load_filter_values(self, input_path: str) -> None:
+        try:
+            dataframe = load_excel(input_path)
+        except Exception as exc:
+            self._reset_filter_values(f"Unable to load filters: {exc}")
+            self._set_status(f"Selected input file, but filters could not be loaded: {exc}", level="warning")
+            return
+
+        for column in self.filter_columns:
+            combo = self.filter_combos[column]
+            values = self._distinct_column_values(dataframe, column)
+            combo.set_values(values)
+
+        self._set_status(f"Selected input file: {input_path} | filters loaded")
+
+    def _reset_filter_values(self, message: str) -> None:
+        for combo in self.filter_combos.values():
+            combo.reset(message)
+
+    def _distinct_column_values(self, dataframe, column: str) -> list[str]:
+        if column not in dataframe.columns:
+            return []
+        values = dataframe[column].dropna().astype("string").str.strip()
+        values = values[values.ne("")]
+        return sorted(values.unique().tolist(), key=str.lower)
+
+    def _selected_scope_filters(self) -> tuple[ScopeFilterDefinition, ...]:
+        filters: list[ScopeFilterDefinition] = []
+        for column in self.filter_columns:
+            selected_values = self.filter_combos[column].checked_values()
+            if not selected_values:
+                continue
+            filters.append(
+                ScopeFilterDefinition(
+                    column=column,
+                    allowed_values=tuple(selected_values),
+                    casefold=column == "Contacted",
+                )
+            )
+        return tuple(filters)
+
     def _on_run(self) -> None:
         if self._run_thread is not None:
             return
@@ -294,7 +510,7 @@ class WelcomePage(QWidget):
 
         # Run heavy Excel + pandas work off the UI thread to avoid freezing.
         self._run_thread = QThread(self)
-        self._run_worker = AnalysisWorker(input_path, output_path)
+        self._run_worker = AnalysisWorker(input_path, output_path, self._selected_scope_filters())
         self._run_worker.moveToThread(self._run_thread)
 
         self._run_thread.started.connect(self._run_worker.run)
@@ -330,6 +546,8 @@ class WelcomePage(QWidget):
         self.run_button.setEnabled(not busy)
         self.pick_input_button.setEnabled(not busy)
         self.pick_output_button.setEnabled(not busy)
+        for combo in self.filter_combos.values():
+            combo.setEnabled(not busy and combo.has_loaded_values())
         self.loading_label.setVisible(busy)
         self.loading_bar.setVisible(busy)
 

@@ -20,6 +20,9 @@ from ..config import (
     ScopeFilterDefinition,
 )
 
+EMAIL_ITEM_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+EMAIL_SPLIT_REGEX = re.compile(r"(?:[;,:/\r\n]+)|(?:\s{2,})")
+
 
 @dataclass(slots=True)
 class RuleResult:
@@ -114,8 +117,8 @@ class StatusInfoConsistencyRule(ValidationRule):
 
 
 def is_valid_location(value) -> bool:
-    if pd.isna(value):
-        return False
+    if is_empty_value(value):
+        return True
     if not isinstance(value, str):
         return False
     stripped = value.strip()
@@ -133,21 +136,53 @@ def is_valid_ref(value) -> bool:
 
 
 def check_column_length(value) -> bool:
-    if pd.isna(value) or not isinstance(value, str):
+    if is_empty_value(value):
+        return True
+    if not isinstance(value, str):
         return False
     return len(value.strip()) == CHAR_LENGTH
 
 
 def check_column_against_regex(value, regex: str) -> bool:
-    if pd.isna(value) or not isinstance(value, str):
+    if is_empty_value(value):
+        return True
+    if not isinstance(value, str):
         return False
+    if regex == EMAIL_REGEX:
+        return is_valid_email_list(value)
     return re.match(regex, value.strip()) is not None
 
 
 def is_allowed_value(value, allowed_values: list[str]) -> bool:
-    if pd.isna(value) or not isinstance(value, str):
+    if is_empty_value(value):
+        return True
+    if not isinstance(value, str):
         return False
     return value.strip().lower() in allowed_values
+
+
+def is_empty_value(value) -> bool:
+    if pd.isna(value):
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def is_valid_email_list(value: str) -> bool:
+    # Support multiple emails separated by comma, semicolon, slash, or newline.
+    parts = [part.strip() for part in EMAIL_SPLIT_REGEX.split(value) if part.strip()]
+    if not parts:
+        return True
+    found_email = False
+    for part in parts:
+        if "@" not in part:
+            # Allow display names / labels mixed with emails in the same cell.
+            continue
+        found_email = True
+        if EMAIL_ITEM_REGEX.match(part) is None:
+            return False
+    return found_email
 
 
 def normalize(dataframe: pd.DataFrame, wanted_columns: list[str]) -> pd.DataFrame:

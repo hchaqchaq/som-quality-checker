@@ -15,6 +15,7 @@ from ..config import (
     AllowedValueRuleDefinition,
     ConsistencyRuleDefinition,
     EXCEL_ERRORS,
+    GroupConsistencyRuleDefinition,
     LOCATION_REGEX,
     PredicateRuleDefinition,
     ScopeFilterDefinition,
@@ -90,6 +91,35 @@ class AllowedValueRule(ValidationRule):
             fail_counts=fail_series.astype(int),
             row_messages=row_messages,
             column_fail_counts={self.column: int(fail_series.sum())},
+        )
+
+
+class GroupConsistencyRule(ValidationRule):
+    def __init__(self, rule_name: str, group_column: str, check_column: str, message: str) -> None:
+        super().__init__(rule_name)
+        self.group_column = group_column
+        self.check_column = check_column
+        self.message = message
+
+    def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
+        fail_series = pd.Series(False, index=dataframe.index)
+
+        valid_mask = dataframe[self.group_column].notna() & (dataframe[self.group_column].astype(str).str.strip() != "")
+
+        if valid_mask.any():
+            group_normalized = dataframe[self.group_column].astype("string").str.lower().str.strip().fillna("")
+            check_normalized = dataframe[self.check_column].astype("string").str.lower().str.strip().fillna("")
+
+            grouped = check_normalized[valid_mask].groupby(group_normalized[valid_mask])
+            nunique = grouped.transform(lambda x: x[x != ""].nunique())
+            fail_series.loc[valid_mask] = nunique > 1
+
+        row_messages = fail_series.apply(lambda failed: self.message if bool(failed) else "")
+        return RuleResult(
+            rule_name=self.rule_name,
+            fail_counts=fail_series.astype(int),
+            row_messages=row_messages,
+            column_fail_counts={self.check_column: int(fail_series.sum())},
         )
 
 
@@ -230,6 +260,17 @@ def build_default_rules() -> list[ValidationRule]:
             rules.append(StatusInfoConsistencyRule(rule_name=definition.rule_name))
             continue
 
+        if isinstance(definition, GroupConsistencyRuleDefinition):
+            rules.append(
+                GroupConsistencyRule(
+                    rule_name=definition.rule_name,
+                    group_column=definition.group_column,
+                    check_column=definition.check_column,
+                    message=definition.message,
+                )
+            )
+            continue
+
         raise TypeError(f"Unsupported rule definition: {definition!r}")
 
     return rules
@@ -248,5 +289,4 @@ def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefiniti
             allowed_values = set(filter_definition.allowed_values)
         mask &= series.isin(allowed_values)
     return mask
-
 

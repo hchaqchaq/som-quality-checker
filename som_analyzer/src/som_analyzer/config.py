@@ -113,7 +113,16 @@ class ConsistencyRuleDefinition:
     rule_name: str = ""
 
 
-RuleDefinition = PredicateRuleDefinition | AllowedValueRuleDefinition | ConsistencyRuleDefinition
+@dataclass(frozen=True, slots=True)
+class GroupConsistencyRuleDefinition:
+    kind: Literal["group_consistency"] = "group_consistency"
+    rule_name: str = ""
+    group_column: str = ""
+    check_column: str = ""
+    message: str = ""
+
+
+RuleDefinition = PredicateRuleDefinition | AllowedValueRuleDefinition | ConsistencyRuleDefinition | GroupConsistencyRuleDefinition
 
 
 SCOPE_FILTERS = (
@@ -164,5 +173,16 @@ DEFAULT_RULE_DEFINITIONS: tuple[RuleDefinition, ...] = (
         message_template="Invalid reference (Excel error token): {columns}",
     ),
     ConsistencyRuleDefinition(rule_name="status_info_missing"),
+    GroupConsistencyRuleDefinition(
+        rule_name="cofor_address_consistency",
+        group_column="Manufacturer COFOR",
+        check_column="Manufacturer address",
+        message="Inconsistent Manufacturer address for the same Manufacturer COFOR",
+    ),
+    GroupConsistencyRuleDefinition(
+        rule_name="shipper_cofor_address_consistency",
+        group_column="Shipper COFOR2",
+        check_column="Shipper COFOR Address",
+        message="Inconsistent Shipper COFOR Address for the same Shipper COFOR2",
+    ),
 )
-

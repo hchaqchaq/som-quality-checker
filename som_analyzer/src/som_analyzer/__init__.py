@@ -1,2 +1,1 @@
 """som_analyzer package."""
-

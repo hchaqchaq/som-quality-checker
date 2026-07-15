@@ -26,5 +26,3 @@ def load_excel(path: Path | str) -> pd.DataFrame:
         raise LoadError(f"Missing required columns: {', '.join(missing_columns)}")
 
     return dataframe
-
-

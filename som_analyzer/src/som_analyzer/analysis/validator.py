@@ -44,11 +44,11 @@ class ValidationRule(ABC):
 
 class ColumnPredicateRule(ValidationRule):
     def __init__(
-        self,
-        rule_name: str,
-        columns: list[str],
-        predicate: Callable[[object], bool],
-        message_template: str,
+            self,
+            rule_name: str,
+            columns: list[str],
+            predicate: Callable[[object], bool],
+            message_template: str,
     ) -> None:
         super().__init__(rule_name)
         self.columns = columns
@@ -129,12 +129,12 @@ class StatusInfoConsistencyRule(ValidationRule):
 
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
         fail_series = (
-            dataframe["Status"].astype(str).str.strip().eq("Complete")
-            & (
-                dataframe["Info completed"].isna()
-                | dataframe["Info completed"].astype(str).str.strip().eq("")
-                | dataframe["Info completed"].astype(str).str.strip().str.lower().isin(["nan", "none"])
-            )
+                dataframe["Status"].astype(str).str.strip().eq("Complete")
+                & (
+                        dataframe["Info completed"].isna()
+                        | dataframe["Info completed"].astype(str).str.strip().eq("")
+                        | dataframe["Info completed"].astype(str).str.strip().str.lower().isin(["nan", "none"])
+                )
         )
         message = "Consistency check error: Status is Complete but Info completed is missing or empty"
         row_messages = fail_series.apply(lambda failed: message if bool(failed) else "")
@@ -289,4 +289,3 @@ def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefiniti
             allowed_values = set(filter_definition.allowed_values)
         mask &= series.isin(allowed_values)
     return mask
-

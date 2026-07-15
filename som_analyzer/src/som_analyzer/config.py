@@ -124,13 +124,11 @@ class GroupConsistencyRuleDefinition:
 
 RuleDefinition = PredicateRuleDefinition | AllowedValueRuleDefinition | ConsistencyRuleDefinition | GroupConsistencyRuleDefinition
 
-
 SCOPE_FILTERS = (
     ScopeFilterDefinition(column="Plant", allowed_values=tuple(PLANT_FILTER)),
     ScopeFilterDefinition(column="Contacted", allowed_values=tuple(CONTACTED_FILTER), casefold=True),
     ScopeFilterDefinition(column="Info completed", allowed_values=tuple(INFO_COMPLETED_FILTER)),
 )
-
 
 DEFAULT_RULE_DEFINITIONS: tuple[RuleDefinition, ...] = (
     PredicateRuleDefinition(

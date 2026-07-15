@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from time import perf_counter
 
 import pandas as pd
-import sqlite3
 
 from .loader import load_excel
 from .validator import RuleResult, build_default_rules, build_scope_mask, normalize
@@ -41,9 +41,9 @@ class RunResult:
 
 
 def run_analysis(
-    input_path: Path | str,
-    scope_filters: tuple[ScopeFilterDefinition, ...] | None = None,
-    connection: sqlite3.Connection | None = None,
+        input_path: Path | str,
+        scope_filters: tuple[ScopeFilterDefinition, ...] | None = None,
+        connection: sqlite3.Connection | None = None,
 ) -> RunResult:
     resolved_input = Path(input_path)
     started_perf = perf_counter()
@@ -152,6 +152,3 @@ def _build_export_target(input_file: Path, output_path: Path | str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", input_file.stem).strip("._") or "analysis"
     return output_dir / f"{safe_stem}_{timestamp}.xlsx"
-
-
-

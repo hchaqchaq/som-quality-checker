@@ -28,10 +28,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .app import SomAnalyzeController
 from ..analysis.loader import load_excel
 from ..analysis.runner import RunResult, export_result, run_analysis
 from ..config import APP_LOGO_PATH, PREVIEW_ROWS, ScopeFilterDefinition
-from .app import SomAnalyzeController
 
 
 class CheckableComboBox(QComboBox):
@@ -83,11 +83,11 @@ class CheckableComboBox(QComboBox):
         return model.rowCount() > 0 and model.item(0).text() == "All"
 
     def _append_item(
-        self,
-        text: str,
-        value: str | None,
-        checked: bool,
-        checkable: bool = True,
+            self,
+            text: str,
+            value: str | None,
+            checked: bool,
+            checkable: bool = True,
     ) -> None:
         item = QStandardItem(text)
         flags = Qt.ItemFlag.ItemIsEnabled
@@ -140,10 +140,10 @@ class AnalysisWorker(QObject):
     finished = pyqtSignal(object, str, str)
 
     def __init__(
-        self,
-        input_path: str,
-        output_path: str,
-        scope_filters: tuple[ScopeFilterDefinition, ...],
+            self,
+            input_path: str,
+            output_path: str,
+            scope_filters: tuple[ScopeFilterDefinition, ...],
     ) -> None:
         super().__init__()
         self.input_path = input_path
@@ -221,7 +221,8 @@ class MainWindow(QMainWindow):
         menu_width = max(self.menu.sizeHintForColumn(0) + 34, 92)
         content_width = max(title_width, menu_width, 142)
         self.menu.setFixedWidth(content_width)
-        sidebar.setFixedWidth(content_width + sidebar_layout.contentsMargins().left() + sidebar_layout.contentsMargins().right())
+        sidebar.setFixedWidth(
+            content_width + sidebar_layout.contentsMargins().left() + sidebar_layout.contentsMargins().right())
         layout.addWidget(sidebar)
 
         self.pages = QStackedWidget()
@@ -323,11 +324,11 @@ class WelcomePage(QWidget):
         }
 
         for column_index, (label, combo) in enumerate(
-            (
-                ("Plant", self.plant_filter),
-                ("Contacted", self.contacted_filter),
-                ("Info completed", self.info_completed_filter),
-            )
+                (
+                        ("Plant", self.plant_filter),
+                        ("Contacted", self.contacted_filter),
+                        ("Info completed", self.info_completed_filter),
+                )
         ):
             label_widget = QLabel(label)
             filters_grid.addWidget(label_widget, 0, column_index)

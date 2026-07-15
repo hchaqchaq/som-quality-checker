@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from ..config import DB_PATH, ensure_data_dir
 from .schema import all_statements
+from ..config import DB_PATH, ensure_data_dir
 
 
 @dataclass(slots=True)
@@ -68,31 +68,28 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
 
     connection.execute(
         """
-        INSERT INTO runs (
-            id,
-            started_at,
-            finished_at,
-            duration_s,
-            input_file,
-            exported_file,
-            rows_total,
-            rows_in_scope,
-            rows_failed,
-            status,
-            error_message
-        )
-        SELECT
-            id,
-            started_at,
-            finished_at,
-            duration_s,
-            input_file,
-            exported_file,
-            rows_total,
-            rows_in_scope,
-            rows_failed,
-            status,
-            error_message
+        INSERT INTO runs (id,
+                          started_at,
+                          finished_at,
+                          duration_s,
+                          input_file,
+                          exported_file,
+                          rows_total,
+                          rows_in_scope,
+                          rows_failed,
+                          status,
+                          error_message)
+        SELECT id,
+               started_at,
+               finished_at,
+               duration_s,
+               input_file,
+               exported_file,
+               rows_total,
+               rows_in_scope,
+               rows_failed,
+               status,
+               error_message
         FROM runs_old
         """
     )
@@ -106,19 +103,16 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
                 connection.execute(statement)
         connection.execute(
             """
-            INSERT INTO run_columns (
-                id,
-                run_id,
-                rule_name,
-                column_name,
-                fail_count
-            )
-            SELECT
-                id,
-                run_id,
-                rule_name,
-                column_name,
-                fail_count
+            INSERT INTO run_columns (id,
+                                     run_id,
+                                     rule_name,
+                                     column_name,
+                                     fail_count)
+            SELECT id,
+                   run_id,
+                   rule_name,
+                   column_name,
+                   fail_count
             FROM run_columns_old
             """
         )
@@ -133,24 +127,23 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
 
 
 def insert_run(
-    connection: sqlite3.Connection,
-    run_record: RunRecord,
-    column_records: Iterable[ColumnRecord],
+        connection: sqlite3.Connection,
+        run_record: RunRecord,
+        column_records: Iterable[ColumnRecord],
 ) -> int:
     cursor = connection.execute(
         """
-        INSERT INTO runs (
-            started_at,
-            finished_at,
-            duration_s,
-            input_file,
-            exported_file,
-            rows_total,
-            rows_in_scope,
-            rows_failed,
-            status,
-            error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO runs (started_at,
+                          finished_at,
+                          duration_s,
+                          input_file,
+                          exported_file,
+                          rows_total,
+                          rows_in_scope,
+                          rows_failed,
+                          status,
+                          error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_record.started_at,
@@ -186,21 +179,19 @@ def insert_run(
 def list_runs(connection: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
     cursor = connection.execute(
         """
-        SELECT
-            id,
-            started_at,
-            finished_at,
-            duration_s,
-            input_file,
-            exported_file,
-            rows_total,
-            rows_in_scope,
-            rows_failed,
-            status,
-            error_message
+        SELECT id,
+               started_at,
+               finished_at,
+               duration_s,
+               input_file,
+               exported_file,
+               rows_total,
+               rows_in_scope,
+               rows_failed,
+               status,
+               error_message
         FROM runs
-        ORDER BY id DESC
-        LIMIT ?
+        ORDER BY id DESC LIMIT ?
         """,
         (limit,),
     )
@@ -210,10 +201,9 @@ def list_runs(connection: sqlite3.Connection, limit: int = 200) -> list[sqlite3.
 def get_run_columns(connection: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
     cursor = connection.execute(
         """
-        SELECT
-            rule_name,
-            column_name,
-            fail_count
+        SELECT rule_name,
+               column_name,
+               fail_count
         FROM run_columns
         WHERE run_id = ?
         ORDER BY rule_name, column_name
@@ -231,6 +221,3 @@ def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
 def update_run_exported_file(connection: sqlite3.Connection, run_id: int, exported_file: str) -> None:
     connection.execute("UPDATE runs SET exported_file = ? WHERE id = ?", (exported_file, run_id))
     connection.commit()
-
-
-

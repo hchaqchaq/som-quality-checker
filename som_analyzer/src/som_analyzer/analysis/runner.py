@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 import re
 from time import perf_counter
@@ -14,7 +14,7 @@ from .validator import RuleResult, build_default_rules, build_scope_mask, normal
 from ..config import (
     DB_PATH,
     SCOPE_FILTERS,
-    WANTED_COLUMNS,
+    TEXT_COLUMNS,
     ScopeFilterDefinition,
 )
 from ..db.repository import (
@@ -44,6 +44,8 @@ def run_analysis(
     input_path: Path | str,
     scope_filters: tuple[ScopeFilterDefinition, ...] | None = None,
     connection: sqlite3.Connection | None = None,
+    *,
+    analysis_date: date | None = None,
 ) -> RunResult:
     resolved_input = Path(input_path)
     started_perf = perf_counter()
@@ -54,7 +56,7 @@ def run_analysis(
     source_df["Check"] = pd.Series(dtype="boolean")
     source_df["Comment"] = pd.Series(dtype="string")
 
-    df_normalized = normalize(source_df, WANTED_COLUMNS)
+    df_normalized = normalize(source_df, TEXT_COLUMNS)
     active_filters = SCOPE_FILTERS if scope_filters is None else scope_filters
     mask_selected = build_scope_mask(df_normalized, active_filters)
 
@@ -63,7 +65,7 @@ def run_analysis(
     df_rest["Comment"] = "Out of filters"
     df_rest["Check"] = "Out of filters"
 
-    rule_results = [rule.evaluate(df_filtered) for rule in build_default_rules()]
+    rule_results = [rule.evaluate(df_filtered) for rule in build_default_rules(analysis_date)]
 
     total_check = sum(result.fail_counts for result in rule_results)
     df_filtered["Check"] = total_check.astype(int)

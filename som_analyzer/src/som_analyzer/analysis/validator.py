@@ -3,26 +3,16 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
-from ..config import (
-    CHAR_LENGTH,
-    CHAR_PATTERN_REGEX,
-    EMAIL_REGEX,
-    DEFAULT_RULE_DEFINITIONS,
-    AllowedValueRuleDefinition,
-    ConsistencyRuleDefinition,
-    EXCEL_ERRORS,
-    GroupConsistencyRuleDefinition,
-    LOCATION_REGEX,
-    PredicateRuleDefinition,
-    ScopeFilterDefinition,
-)
+from ..config import EMAIL_REGEX, ScopeFilterDefinition
 
-EMAIL_ITEM_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-EMAIL_SPLIT_REGEX = re.compile(r"(?:[;,:/\r\n]+)|(?:\s{2,})")
+EMAIL_ITEM_REGEX = re.compile(EMAIL_REGEX)
+NOTE_DATE_REGEX = re.compile(r"(?<!\d)(\d{2}/\d{2}/\d{4})(?!\d)")
+NOTE_DATE_TOKEN_REGEX = re.compile(r"(?<!\d)(\d{1,4}[./-]\d{1,2}[./-]\d{1,4})(?!\d)")
+COMPLETED_VALUES = frozenset({"complete", "completed"})
 
 
 @dataclass(slots=True)
@@ -42,238 +32,256 @@ class ValidationRule(ABC):
         raise NotImplementedError
 
 
-class ColumnPredicateRule(ValidationRule):
+class StatusCompletedRule(ValidationRule):
+    def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
+        fail_series = dataframe["Status"].apply(is_completed) & ~dataframe["Info completed"].apply(is_completed)
+        message = "INFO COMPLETED MUST BE COMPLETED"
+        return _build_result(self.rule_name, fail_series, message, "Info completed")
+
+
+class CompletionDateRule(ValidationRule):
+    def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
+        condition = (
+            dataframe["Status"].apply(is_completed)
+            & dataframe["Info completed"].apply(is_completed)
+            & dataframe["Contacted"].apply(is_yes)
+        )
+        messages = pd.Series("", index=dataframe.index, dtype="string")
+        for index in dataframe.index[condition]:
+            value = dataframe.at[index, "Completion date"]
+            if is_empty_value(value):
+                messages.at[index] = "COMPLETION DATE IS MISSING"
+            elif parse_completion_date(value) is None:
+                messages.at[index] = "COMPLETION DATE IS INVALID"
+        fail_series = messages.ne("")
+        return _build_result(self.rule_name, fail_series, messages, "Completion date")
+
+
+class RelanceRule(ValidationRule):
+    def __init__(self, rule_name: str, reference_date: date) -> None:
+        super().__init__(rule_name)
+        self.reference_date = reference_date
+
+    def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
+        condition = dataframe["Info completed"].apply(is_empty_value) & dataframe["Contacted"].apply(is_yes)
+        messages = pd.Series("", index=dataframe.index, dtype="string")
+        oldest_allowed = self.reference_date - timedelta(days=3)
+        for index in dataframe.index[condition]:
+            dates = extract_note_dates(dataframe.at[index, "NOTE"])
+            if not dates:
+                messages.at[index] = "RELANCE DATE IS MISSING OR INVALID"
+                continue
+            latest_date = max(dates)
+            if latest_date > self.reference_date:
+                messages.at[index] = "RELANCE DATE IS IN THE FUTURE"
+            elif latest_date < oldest_allowed:
+                messages.at[index] = "RELANCE DATE IS OLDER THAN 3 DAYS"
+        fail_series = messages.ne("")
+        return _build_result(self.rule_name, fail_series, messages, "NOTE")
+
+
+class CoforAddressRule(ValidationRule):
     def __init__(
         self,
         rule_name: str,
-        columns: list[str],
-        predicate: Callable[[object], bool],
-        message_template: str,
+        cofor_column: str,
+        address_column: str,
+        label: str,
     ) -> None:
         super().__init__(rule_name)
-        self.columns = columns
-        self.predicate = predicate
-        self.message_template = message_template
+        self.cofor_column = cofor_column
+        self.address_column = address_column
+        self.label = label
 
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        fail_matrix = ~dataframe[self.columns].apply(lambda col: col.apply(self.predicate))
-        fail_counts = fail_matrix.sum(axis=1).astype(int)
+        normalized_cofors = dataframe[self.cofor_column].apply(normalize_key)
+        normalized_addresses = dataframe[self.address_column].apply(normalize_key)
+        participating = normalized_cofors.ne("") & normalized_addresses.ne("")
+        grouped = pd.DataFrame(
+            {"cofor": normalized_cofors[participating], "address": normalized_addresses[participating]}
+        )
+        conflicting_cofors = set(
+            grouped.groupby("cofor")["address"].nunique().loc[lambda values: values > 1].index
+        )
+        fail_series = participating & normalized_cofors.isin(conflicting_cofors)
+        messages = pd.Series("", index=dataframe.index, dtype="string")
+        for index in dataframe.index[fail_series]:
+            cofor = normalized_text(dataframe.at[index, self.cofor_column])
+            messages.at[index] = f"{self.label} COFOR {cofor} HAS MULTIPLE ADDRESSES"
+        return _build_result(self.rule_name, fail_series, messages, self.address_column)
 
-        def _build_message(row: pd.Series) -> str:
-            failed_columns = [column for column in self.columns if bool(row[column])]
-            if not failed_columns:
-                return ""
-            return self.message_template.format(columns=", ".join(failed_columns))
 
-        row_messages = fail_matrix.apply(_build_message, axis=1)
-        column_fail_counts = {column: int(fail_matrix[column].sum()) for column in self.columns}
-
-        return RuleResult(
-            rule_name=self.rule_name,
-            fail_counts=fail_counts,
-            row_messages=row_messages,
-            column_fail_counts=column_fail_counts,
+class CoforFormatRule(ValidationRule):
+    def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
+        condition = dataframe["Contacted"].apply(is_yes) & dataframe["Info completed"].apply(is_completed)
+        fail_series = condition & dataframe["Format check"].apply(normalized_text).str.casefold().eq("nok")
+        return _build_result(
+            self.rule_name,
+            fail_series,
+            "COFOR PATTERN (6 CHARS + 2 SPACES + 2 CHARS)",
+            "Format check",
         )
 
 
-class AllowedValueRule(ValidationRule):
-    def __init__(self, rule_name: str, column: str, allowed_values: list[str], message: str) -> None:
+class RequiredEmailRule(ValidationRule):
+    def __init__(self, rule_name: str, column: str) -> None:
         super().__init__(rule_name)
         self.column = column
-        self.allowed_values = allowed_values
-        self.message = message
 
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        fail_series = ~dataframe[self.column].apply(lambda value: is_allowed_value(value, self.allowed_values))
-        row_messages = fail_series.apply(lambda failed: self.message if bool(failed) else "")
-        return RuleResult(
-            rule_name=self.rule_name,
-            fail_counts=fail_series.astype(int),
-            row_messages=row_messages,
-            column_fail_counts={self.column: int(fail_series.sum())},
-        )
+        fail_series = ~dataframe[self.column].apply(is_valid_single_email)
+        message = f"INVALID OR MISSING EMAIL: {self.column}"
+        return _build_result(self.rule_name, fail_series, message, self.column)
 
 
-class GroupConsistencyRule(ValidationRule):
-    def __init__(self, rule_name: str, group_column: str, check_column: str, message: str) -> None:
-        super().__init__(rule_name)
-        self.group_column = group_column
-        self.check_column = check_column
-        self.message = message
-
+class ContactedWhenStatusFilledRule(ValidationRule):
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        fail_series = pd.Series(False, index=dataframe.index)
-
-        valid_mask = dataframe[self.group_column].notna() & (dataframe[self.group_column].astype(str).str.strip() != "")
-
-        if valid_mask.any():
-            group_normalized = dataframe[self.group_column].astype("string").str.lower().str.strip().fillna("")
-            check_normalized = dataframe[self.check_column].astype("string").str.lower().str.strip().fillna("")
-
-            grouped = check_normalized[valid_mask].groupby(group_normalized[valid_mask])
-            nunique = grouped.transform(lambda x: x[x != ""].nunique())
-            fail_series.loc[valid_mask] = nunique > 1
-
-        row_messages = fail_series.apply(lambda failed: self.message if bool(failed) else "")
-        return RuleResult(
-            rule_name=self.rule_name,
-            fail_counts=fail_series.astype(int),
-            row_messages=row_messages,
-            column_fail_counts={self.check_column: int(fail_series.sum())},
+        status_filled = ~dataframe["Status"].apply(is_empty_value)
+        fail_series = status_filled & ~dataframe["Contacted"].apply(is_yes)
+        return _build_result(
+            self.rule_name,
+            fail_series,
+            "CONTACTED MUST BE YES WHEN STATUS IS FILLED",
+            "Contacted",
         )
 
 
-class StatusInfoConsistencyRule(ValidationRule):
-    def __init__(self, rule_name: str) -> None:
-        super().__init__(rule_name)
-
+class NoteDateFormatRule(ValidationRule):
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        fail_series = (
-            dataframe["Status"].astype(str).str.strip().eq("Complete")
-            & (
-                dataframe["Info completed"].isna()
-                | dataframe["Info completed"].astype(str).str.strip().eq("")
-                | dataframe["Info completed"].astype(str).str.strip().str.lower().isin(["nan", "none"])
-            )
-        )
-        message = "Consistency check error: Status is Complete but Info completed is missing or empty"
-        row_messages = fail_series.apply(lambda failed: message if bool(failed) else "")
-        return RuleResult(
-            rule_name=self.rule_name,
-            fail_counts=fail_series.astype(int),
-            row_messages=row_messages,
-            column_fail_counts={"Info completed": int(fail_series.sum())},
+        fail_series = ~dataframe["NOTE"].apply(has_valid_note_dates)
+        return _build_result(
+            self.rule_name,
+            fail_series,
+            "NOTE DATE MUST USE DD/MM/YYYY",
+            "NOTE",
         )
 
 
-def is_valid_location(value) -> bool:
-    if is_empty_value(value):
-        return True
-    if not isinstance(value, str):
-        return False
-    stripped = value.strip()
-    if len(stripped) < 5:
-        return False
-    return bool(LOCATION_REGEX.search(stripped))
+def _build_result(
+    rule_name: str,
+    fail_series: pd.Series,
+    messages: str | pd.Series,
+    column: str,
+) -> RuleResult:
+    failures = fail_series.astype(int)
+    if isinstance(messages, str):
+        row_messages = fail_series.apply(lambda failed: messages if bool(failed) else "").astype("string")
+    else:
+        row_messages = messages.astype("string")
+    return RuleResult(
+        rule_name=rule_name,
+        fail_counts=failures,
+        row_messages=row_messages,
+        column_fail_counts={column: int(failures.sum())},
+    )
 
 
-def is_valid_ref(value) -> bool:
-    if pd.isna(value):
-        return True
-    if not isinstance(value, str):
-        return True
-    return value.strip().lower() not in EXCEL_ERRORS
-
-
-def check_column_length(value) -> bool:
-    if is_empty_value(value):
-        return True
-    if not isinstance(value, str):
-        return False
-    return len(value.strip()) == CHAR_LENGTH
-
-
-def check_column_against_regex(value, regex: str) -> bool:
-    if is_empty_value(value):
-        return True
-    if not isinstance(value, str):
-        return False
-    if regex == EMAIL_REGEX:
-        return is_valid_email_list(value)
-    return re.match(regex, value.strip()) is not None
-
-
-def is_allowed_value(value, allowed_values: list[str]) -> bool:
-    if is_empty_value(value):
-        return True
-    if not isinstance(value, str):
-        return False
-    return value.strip().lower() in allowed_values
-
-
-def is_empty_value(value) -> bool:
-    if pd.isna(value):
+def is_empty_value(value: object) -> bool:
+    if value is None:
         return True
     if isinstance(value, str):
         return value.strip() == ""
-    return False
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(missing) if isinstance(missing, bool) else False
 
 
-def is_valid_email_list(value: str) -> bool:
-    # Support multiple emails separated by comma, semicolon, slash, or newline.
-    parts = [part.strip() for part in EMAIL_SPLIT_REGEX.split(value) if part.strip()]
-    if not parts:
-        return True
-    found_email = False
-    for part in parts:
-        if "@" not in part:
-            # Allow display names / labels mixed with emails in the same cell.
+def normalized_text(value: object) -> str:
+    return "" if is_empty_value(value) else str(value).strip()
+
+
+def normalize_key(value: object) -> str:
+    return " ".join(normalized_text(value).split()).casefold()
+
+
+def is_completed(value: object) -> bool:
+    return normalized_text(value).casefold() in COMPLETED_VALUES
+
+
+def is_yes(value: object) -> bool:
+    return normalized_text(value).casefold() == "yes"
+
+
+def parse_completion_date(value: object) -> date | None:
+    if isinstance(value, pd.Timestamp):
+        return None if pd.isna(value) else value.date()
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = normalized_text(value)
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
+def extract_note_dates(value: object) -> list[date]:
+    text = normalized_text(value)
+    parsed_dates: list[date] = []
+    for match in NOTE_DATE_REGEX.finditer(text):
+        try:
+            parsed_dates.append(datetime.strptime(match.group(1), "%d/%m/%Y").date())
+        except ValueError:
             continue
-        found_email = True
-        if EMAIL_ITEM_REGEX.match(part) is None:
+    return parsed_dates
+
+
+def has_valid_note_dates(value: object) -> bool:
+    tokens = NOTE_DATE_TOKEN_REGEX.findall(normalized_text(value))
+    if not tokens:
+        return False
+
+    for token in tokens:
+        if NOTE_DATE_REGEX.fullmatch(token) is None:
             return False
-    return found_email
+        try:
+            datetime.strptime(token, "%d/%m/%Y")
+        except ValueError:
+            return False
+    return True
 
 
-def normalize(dataframe: pd.DataFrame, wanted_columns: list[str]) -> pd.DataFrame:
+def is_valid_single_email(value: object) -> bool:
+    text = normalized_text(value)
+    return bool(text) and EMAIL_ITEM_REGEX.fullmatch(text) is not None
+
+
+def normalize(dataframe: pd.DataFrame, text_columns: list[str]) -> pd.DataFrame:
     normalized = dataframe.copy()
-    for column in wanted_columns:
+    for column in text_columns:
         normalized[column] = normalized[column].astype("string").str.strip()
     return normalized
 
 
-def build_default_rules() -> list[ValidationRule]:
-    predicate_registry: dict[str, Callable[[object], bool]] = {
-        "email": lambda value: check_column_against_regex(value, EMAIL_REGEX),
-        "cofor_pattern": lambda value: check_column_against_regex(value, CHAR_PATTERN_REGEX),
-        "length_12": check_column_length,
-        "location": is_valid_location,
-        "excel_ref": is_valid_ref,
-    }
-
-    rules: list[ValidationRule] = []
-    for definition in DEFAULT_RULE_DEFINITIONS:
-        if isinstance(definition, PredicateRuleDefinition):
-            predicate = predicate_registry[definition.predicate_name]
-            rules.append(
-                ColumnPredicateRule(
-                    rule_name=definition.rule_name,
-                    columns=list(definition.columns),
-                    predicate=predicate,
-                    message_template=definition.message_template,
-                )
-            )
-            continue
-
-        if isinstance(definition, AllowedValueRuleDefinition):
-            rules.append(
-                AllowedValueRule(
-                    rule_name=definition.rule_name,
-                    column=definition.column,
-                    allowed_values=list(definition.allowed_values),
-                    message=definition.message,
-                )
-            )
-            continue
-
-        if isinstance(definition, ConsistencyRuleDefinition):
-            rules.append(StatusInfoConsistencyRule(rule_name=definition.rule_name))
-            continue
-
-        if isinstance(definition, GroupConsistencyRuleDefinition):
-            rules.append(
-                GroupConsistencyRule(
-                    rule_name=definition.rule_name,
-                    group_column=definition.group_column,
-                    check_column=definition.check_column,
-                    message=definition.message,
-                )
-            )
-            continue
-
-        raise TypeError(f"Unsupported rule definition: {definition!r}")
-
-    return rules
+def build_default_rules(reference_date: date | None = None) -> list[ValidationRule]:
+    as_of = date.today() if reference_date is None else reference_date
+    return [
+        StatusCompletedRule("status_completed"),
+        CompletionDateRule("completion_date"),
+        RelanceRule("relance", as_of),
+        CoforAddressRule(
+            "shipper_cofor_address",
+            "Shipper COFOR2",
+            "Shipper COFOR Address",
+            "SHIPPER",
+        ),
+        CoforAddressRule(
+            "manufacturer_cofor_address",
+            "Manufacturer COFOR",
+            "Manufacturer address",
+            "MANUFACTURER",
+        ),
+        CoforFormatRule("cofor_format"),
+        RequiredEmailRule("quality_contact_email", "Quality contact"),
+        RequiredEmailRule("logistic_contact_email", "Logistic contact"),
+        ContactedWhenStatusFilledRule("contacted_when_status_filled"),
+        NoteDateFormatRule("note_date_format"),
+    ]
 
 
 def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefinition, ...]) -> pd.Series:
@@ -283,10 +291,9 @@ def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefiniti
         if filter_definition.normalize_text:
             series = series.astype("string").str.strip()
         if filter_definition.casefold:
-            series = series.str.lower()
-            allowed_values = {value.strip().lower() for value in filter_definition.allowed_values}
+            series = series.str.casefold()
+            allowed_values = {value.strip().casefold() for value in filter_definition.allowed_values}
         else:
             allowed_values = set(filter_definition.allowed_values)
         mask &= series.isin(allowed_values)
     return mask
-

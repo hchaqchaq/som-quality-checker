@@ -52,6 +52,69 @@ EDCT_DATE_COLUMNS = (
 EDCT_DATED_COMMENT_COLUMNS = ("Comments", "Kick-off comments", "Readiness Comments", "EDI Comments")
 
 EDCT_PORTAL_COLUMNS = ("eSupplierConnect", "B2B", "New supplier portal", "SPM", "iTMS")
+EDCT_TRIPLE_STATUS_VALUES = ("Valid", "No Valid")
+EDCT_YES_NO_VALUES = ("YES", "NO")
+EDCT_PORTAL_VALUES = ("YES", "NOT")
+EDCT_EDI_MODE_VALUES = ("WEB EDI", "Standard EDI")
+EDCT_PHONE_DIGITS = (7, 20)
+
+EDCT_RULE_CATALOGUE_ROWS = (
+    "| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | One plain email or plain emails separated only by `;` |",
+    "| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | One plain email or plain emails separated only by `;` |",
+    "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
+    "| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |",
+    "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |",
+    "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD.MM.YYYY`; today or earlier |",
+    "| `Comments`, `Kick-off comments` | When populated | Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment` |",
+    "| `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD.MM.YYYY: comment` |",
+    "| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |",
+    "| `Overseas` | Always | Yes | `YES` or `NO` |",
+    "| `Shipping location` | `Overseas = YES` | No | `YES` or `NO` |",
+    "| `Supplier Confimation` | Always | Yes | `YES` |",
+    "| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |",
+    "| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |",
+    "| `OPEN TASK` | Cross-checked for every assessed row | Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise |",
+)
+
+EDCT_UNCHECKED_COLUMNS = (
+    "Alten owner",
+    "Priority",
+    "Seller Name",
+    "Seller address",
+    "Manufacturer Name",
+    "Manufacturer company address",
+    "Shipper Cofor Name",
+    "Shipper address",
+    "Seller/Manuf already in EQP",
+    "Seller/Shipper already in EQP",
+    "EDI already known",
+    "Plants",
+    "Incoterm",
+    "Planned Kick-off week",
+    "ABP Training",
+    "Creation of Cofors request date",
+    "EDI EQP No",
+    "EDI Scenario",
+    "Date of Start of EDI validation / migration",
+    "UNB DELFOR",
+    "Qualifier UNB DELFOR",
+    "UNB DELJIT",
+    "Qualifier UNB DELJIT",
+    "UNB DESADV",
+    "Qualifier UNB DESADV",
+    "Hybrid Cofor",
+    "EQP Status",
+    "CZ STATUS DELJIT",
+    "CZ progress (Avancement CZ) EQP step",
+    "CZ current step (Etape courante CZ)",
+    "Status CZ Date of DELJIT/DESADV",
+    "MF STATUS DELFOR",
+    "MF progress (Avancement MF) EQP step",
+    "MF current step (Etape courante MF)",
+    "Status MF Date of DELFOR",
+    "Status EDI Certified",
+    "SET UP IN CORAIL",
+)
 
 EDCT_REQUIRED_COLUMNS = tuple(
     dict.fromkeys(

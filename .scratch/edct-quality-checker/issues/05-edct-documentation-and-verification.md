@@ -15,7 +15,7 @@
 - [ ] The domain glossary defines checker project and formula reference row without implementation details.
 - [ ] A consistency test detects drift between configured rule targets and the Markdown catalogue.
 - [ ] The full automated test suite covers SOM regression behavior and all eDCT acceptance seams.
-- [ ] The real `materials/eDCT_input.xlsx` smoke run reports actual processed and failed row counts.
+- [ ] The real `materials/eDCT_input.xlsx` smoke run reports actual assessed and failed row counts.
 - [ ] The smoke run confirms every original worksheet remains and the source file is unchanged.
 - [ ] Final verification reports test, smoke, and diff-check evidence.
 

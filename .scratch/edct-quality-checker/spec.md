@@ -41,10 +41,10 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 23. As an eDCT user, I want choice values compared case-insensitively after trimming while preserving original export values, so that harmless formatting does not cause failures or rewrite data.
 24. As an eDCT user, I want `OPEN TASK = YES` when the punch code exists in `Open Task`, so that tracked work is reflected.
 25. As an eDCT user, I want `OPEN TASK` empty when the punch code is absent from `Open Task`, so that stale values are flagged.
-26. As an eDCT user, I want formula columns compared with the first processed row, so that copied formula structures remain consistent.
+26. As an eDCT user, I want formula columns compared with the formula reference row, so that copied formula structures remain consistent.
 27. As an eDCT user, I want row-relative formula references and harmless case, whitespace, or leading-plus differences accepted, so that equivalent formulas pass.
 28. As an eDCT user, I want changed formula logic, constants, or missing formulas rejected, so that broken calculations are visible.
-29. As an eDCT user, I want every processed row flagged when the first row lacks a reference formula, so that the unavailable baseline is visible without stopping other checks.
+29. As an eDCT user, I want every assessed row flagged when the formula reference row lacks a formula, so that the unavailable baseline is visible without stopping other checks.
 30. As an eDCT user, I want explicitly excluded fields left unchecked, so that the checker does not invent rules.
 31. As an eDCT user, I want the entire workbook preserved in export, so that auxiliary sheets, formulas, formatting, and tables remain usable.
 32. As an eDCT user, I want `Check` and `Comment` inside `Tabella2`, so that table filtering and styling include results.
@@ -74,8 +74,8 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 - Normalize for validation only; preserve original values.
 - Count one failure per failed field or condition and group compatible comment reasons with ` | `.
 - Keep dates optional unless another condition requires data.
-- Learn each formula structure from the first processed row and translate row-relative references for comparison.
-- If the first formula baseline is missing, add one named failure to every processed row and continue.
+- Learn each formula structure from the formula reference row and translate row-relative references for comparison.
+- If the formula reference row is missing a formula, add one named failure to every assessed row and continue.
 - Preserve explicitly unchecked fields without validation.
 - Reuse existing result columns or append them inside `Tabella2`.
 - Export as `<original-name>_eDCT_checked_YYYYMMDD_HHMMSS.xlsx`.
@@ -95,14 +95,14 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 - Migration tests verify existing runs become `SOM`, eDCT runs remain separate, and failed attempts are recorded.
 - One thin offscreen GUI seam covers project selection, eDCT controls, absence of SOM filters, compact preview, project history, and back navigation.
 - Existing pytest validation and database tests provide the repository's prior art.
-- The real sample workbook is a smoke test whose observed processed and failed counts are reported rather than predetermined.
+- The real sample workbook is a smoke test whose observed assessed and failed counts are reported rather than predetermined.
 
 ## Out of Scope
 
 - Validating other worksheets except reading `Open Task` for its cross-sheet rule.
 - Adding SOM-style filters to eDCT.
 - Recalculating formulas or validating calculated results.
-- Detecting a consistently wrong formula copied from the first processed row.
+- Detecting a consistently wrong formula copied from the formula reference row.
 - Loading runtime rules from the legacy Excel workbook.
 - Letting users choose a rule file.
 - Automatically correcting source values.

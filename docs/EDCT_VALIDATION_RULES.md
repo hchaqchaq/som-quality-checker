@@ -97,7 +97,7 @@ For each column, the first assessed row is the formula reference row. Later form
 If the reference row lacks a formula, every assessed row receives:
 
 ```text
-Formula validation failed: first processed row is missing the reference formula for <column>
+Formula validation failed: formula reference row is missing the reference formula for <column>
 ```
 
 The checker does not calculate formulas or validate their displayed results.
@@ -109,7 +109,7 @@ The checker does not calculate formulas or validate their displayed results.
 | `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | One plain email or plain emails separated only by `;` |
 | `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | One plain email or plain emails separated only by `;` |
 | `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |
-| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7–20 digits after removing spaces, `+`, parentheses, dots, and hyphens |
+| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |
 | `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |
 | `Effective kick-off date` | When populated | Yes | Native Excel date or `DD.MM.YYYY`; today or earlier |
 | `Comments`, `Kick-off comments` | When populated | Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment` |
@@ -168,6 +168,6 @@ These legacy source fields remain unchanged and do not add failures:
 
 ## Verified sample smoke
 
-On 2026-07-30, `materials/eDCT_input.xlsx` produced 112 assessed rows and 33 failed rows. The exported copy retained all 11 worksheets, contained `Check` and `Comment`, and the source file hash remained unchanged.
+On 2026-07-30, `materials/eDCT_input.xlsx` produced 112 assessed rows and 33 failed rows. The exported copy retained all 11 worksheets, all 16 XML parts containing extension lists, and every source package part; it contained `Check` and `Comment`, and the source file hash remained unchanged.
 
-`openpyxl` warns that an unsupported legacy data-validation extension in the sample is removed when saving. Source cell values, formulas, styles, tables, and worksheets are preserved.
+Unsupported OOXML extension lists are restored from the source package after `openpyxl` saves the annotated workbook. Source cell values, formulas, styles, tables, worksheets, and legacy data-validation extensions are preserved.

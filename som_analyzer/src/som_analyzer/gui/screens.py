@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
@@ -140,41 +140,30 @@ class CheckableComboBox(QComboBox):
 class AnalysisWorker(QObject):
     finished = pyqtSignal(object, str, str)
 
-    def __init__(
-            self,
-            input_path: str,
-            output_path: str,
-            scope_filters: tuple[ScopeFilterDefinition, ...],
-    ) -> None:
+    def __init__(self, task: Callable[[], tuple[object, Path]]) -> None:
         super().__init__()
-        self.input_path = input_path
-        self.output_path = output_path
-        self.scope_filters = scope_filters
+        self.task = task
 
     def run(self) -> None:
         try:
-            result = run_analysis(self.input_path, scope_filters=self.scope_filters)
-            exported_path = export_result(result, self.output_path)
+            result, exported_path = self.task()
             self.finished.emit(result, str(exported_path), "")
         except Exception as exc:  # pragma: no cover - worker error path
             self.finished.emit(None, "", str(exc))
 
 
-class EdctAnalysisWorker(QObject):
-    finished = pyqtSignal(object, str, str)
+def _run_edct(input_path: str, output_path: str) -> tuple[EdctRunResult, Path]:
+    result = run_edct_analysis(input_path)
+    return result, export_edct_result(result, output_path)
 
-    def __init__(self, input_path: str, output_path: str) -> None:
-        super().__init__()
-        self.input_path = input_path
-        self.output_path = output_path
 
-    def run(self) -> None:
-        try:
-            result = run_edct_analysis(self.input_path)
-            exported_path = export_edct_result(result, self.output_path)
-            self.finished.emit(result, str(exported_path), "")
-        except Exception as exc:  # pragma: no cover - worker error path
-            self.finished.emit(None, "", str(exc))
+def _run_som(
+    input_path: str,
+    output_path: str,
+    scope_filters: tuple[ScopeFilterDefinition, ...],
+) -> tuple[RunResult, Path]:
+    result = run_analysis(input_path, scope_filters=scope_filters)
+    return result, export_result(result, output_path)
 
 
 class ProjectSelectionPage(QWidget):
@@ -202,7 +191,7 @@ class EdctPage(QWidget):
         super().__init__()
         self.controller = controller
         self._run_thread: QThread | None = None
-        self._run_worker: EdctAnalysisWorker | None = None
+        self._run_worker: AnalysisWorker | None = None
         layout = QVBoxLayout(self)
         self.back_button = QPushButton("Back to projects")
         layout.addWidget(self.back_button)
@@ -286,7 +275,7 @@ class EdctPage(QWidget):
         self.loading_bar.show()
         self.status.setText("Analysis started...")
         self._run_thread = QThread(self)
-        self._run_worker = EdctAnalysisWorker(input_path, output_path)
+        self._run_worker = AnalysisWorker(lambda: _run_edct(input_path, output_path))
         self._run_worker.moveToThread(self._run_thread)
         self._run_thread.started.connect(self._run_worker.run)
         self._run_worker.finished.connect(self._finished)
@@ -305,7 +294,7 @@ class EdctPage(QWidget):
         run_result = cast(EdctRunResult, result)
         self.result_path.setText(exported_path)
         self.status.setText(
-            f"Run {run_result.run_id} finished | rows: {len(run_result.processed_rows)} | "
+            f"Run {run_result.run_id} finished | rows: {len(run_result.assessed_rows)} | "
             f"failed: {run_result.rows_failed}"
         )
         self._fill_preview(run_result)
@@ -318,7 +307,7 @@ class EdctPage(QWidget):
             for cell in worksheet[2]
             if cell.value is not None
         }
-        rows = result.processed_rows[:PREVIEW_ROWS]
+        rows = result.assessed_rows[:PREVIEW_ROWS]
         self.preview_table.setRowCount(len(rows))
         for display_row, workbook_row in enumerate(rows):
             values = (
@@ -708,7 +697,10 @@ class WelcomePage(QWidget):
 
         # Run heavy Excel + pandas work off the UI thread to avoid freezing.
         self._run_thread = QThread(self)
-        self._run_worker = AnalysisWorker(input_path, output_path, self._selected_scope_filters())
+        scope_filters = self._selected_scope_filters()
+        self._run_worker = AnalysisWorker(
+            lambda: _run_som(input_path, output_path, scope_filters)
+        )
         self._run_worker.moveToThread(self._run_thread)
 
         self._run_thread.started.connect(self._run_worker.run)

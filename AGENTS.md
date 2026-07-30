@@ -50,9 +50,11 @@
   `Comment` and, when applicable, run-history totals.
 - Keep scope filters normalized the same way as the GUI does in `som_analyzer/src/som_analyzer/gui/screens.py` (`Plant`,
   `Contacted`, and `Info completed` selected from the input workbook).
-- New rules should emit both:
+- New SOM rules should emit both:
     - a boolean fail mask used in `Check` aggregation
     - a human-readable reason appended in `build_comment_for_row`
+- New eDCT rules should record one failure entry per failed field or condition; each entry increments `Check`, supplies
+  the field name and value for `Comment`, and contributes to run-history totals.
 - Do not add hardcoded workbook or output paths; pass input and output paths explicitly.
 - Keep the GUI analysis path on a worker thread (`AnalysisWorker` + `QThread`) so workbook loading and export do not
   block the UI.

@@ -17,8 +17,8 @@
 - Preserve every worksheet, formula, style, and original cell value in the exported workbook.
 - Add or replace `Check` and `Comment` inside the existing `Tabella2` table.
 - Normalize values only for validation; leave exported source values unchanged.
-- The first processed row supplies each formula column's reference formula.
-- If a first-row reference formula is missing, add one failure to every processed row for that column and continue.
+- The formula reference row supplies each formula column's reference formula.
+- If its reference formula is missing, add one failure to every assessed row for that column and continue.
 - Keep `materials/edct_vallidation_rules.xlsx.xlsx` as a non-runtime legacy source.
 - Do not add a new dependency.
 - Keep Excel work off the PyQt UI thread.
@@ -215,7 +215,7 @@ git commit -m "feat: define edct validation primitives"
 - Modify: `som_analyzer/tests/test_edct_analysis.py`
 
 **Interfaces:**
-- Produces: `EdctRunResult` with `input_file`, `workbook`, `processed_rows`, `rows_failed`, `row_results`, `rule_totals`, `run_id`, and timing fields.
+- Produces: `EdctRunResult` with `input_file`, `workbook`, `assessed_rows`, `rows_failed`, `row_results`, `rule_totals`, `run_id`, and timing fields.
 - Produces: `run_edct_analysis(input_path: Path | str, connection: sqlite3.Connection | None = None) -> EdctRunResult`.
 - Produces: `export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path`.
 - Produces: `normalize_formula(formula: str, *, origin: str, target: str) -> str`.
@@ -227,7 +227,7 @@ In `test_edct_analysis.py`, create an `openpyxl.Workbook` with:
 
 - `Supplier Level` and `Open Task`.
 - Metadata on row 1 and active headers on row 2.
-- Two processed rows with `Index` values and one ignored row with empty `Index`.
+- Two assessed rows with `Index` values and one ignored row with empty `Index`.
 - A table named `Tabella2`.
 - Valid first-row formulas and row-adjusted second-row formulas.
 - `Open Task.Punch Code` matching only the first supplier.
@@ -245,7 +245,7 @@ def test_edct_requires_both_sheets(tmp_path):
 
 def test_edct_processes_only_rows_with_index(tmp_path):
     result = run_edct_analysis(build_edct_workbook(tmp_path))
-    assert result.processed_rows == (3, 4)
+    assert result.assessed_rows == (3, 4)
 ```
 
 - [ ] **Step 3: Implement workbook loading**
@@ -277,18 +277,18 @@ Normalize for comparisons only. Never write normalized source values back to wor
 - [ ] **Step 6: Write failing formula-reference tests**
 
 ```python
-def test_formula_columns_use_first_processed_row_as_reference(tmp_path):
+def test_formula_columns_use_formula_reference_row(tmp_path):
     path = build_edct_workbook(tmp_path, second_starting_date_formula='=IF(BB4="","",BB4)')
     result = run_edct_analysis(path)
     assert result.row_results[4].check == 1
     assert "Starting date" in result.row_results[4].comment
 
 
-def test_missing_first_formula_flags_every_processed_row_and_continues(tmp_path):
+def test_missing_formula_reference_flags_every_assessed_row_and_continues(tmp_path):
     path = build_edct_workbook(tmp_path, first_starting_date_formula=None)
     result = run_edct_analysis(path)
     assert all(
-        "first processed row is missing the reference formula for Starting date" in result.row_results[row].comment
+        "formula reference row is missing the reference formula for Starting date" in result.row_results[row].comment
         for row in (3, 4)
     )
 ```
@@ -301,10 +301,10 @@ Use `openpyxl.formula.translate.Translator` to translate the first formula from 
 - Removing whitespace outside quoted strings.
 - Comparing case-insensitively.
 
-Do not ignore changed functions, operators, references, or quoted values. When the first processed row lacks a formula, add one failure to every processed row using:
+Do not ignore changed functions, operators, references, or quoted values. When the formula reference row lacks a formula, add one failure to every assessed row using:
 
 ```text
-Formula validation failed: first processed row is missing the reference formula for <column>
+Formula validation failed: formula reference row is missing the reference formula for <column>
 ```
 
 - [ ] **Step 8: Write failing `Open Task` tests**
@@ -336,7 +336,7 @@ Assert:
 
 - [ ] **Step 11: Implement export**
 
-Operate on the workbook already held by `EdctRunResult`. Reuse existing `Check`/`Comment` columns when present; otherwise append them after the current table boundary. Copy header/data styles from the adjacent table column using `copy.copy`, write results only for processed rows, extend `Tabella2.ref`, and save to the selected output directory without changing the input.
+Operate on the workbook already held by `EdctRunResult`. Reuse existing `Check`/`Comment` columns when present; otherwise append them after the current table boundary. Copy header/data styles from the adjacent table column using `copy.copy`, clear prior results, write results for assessed rows, extend `Tabella2.ref`, and save to the selected output directory without changing the input.
 
 - [ ] **Step 12: Run the eDCT analysis tests**
 
@@ -562,7 +562,7 @@ Run analysis against `materials/eDCT_input.xlsx` into a temporary output directo
 - Rows with `Index` are counted.
 - The source workbook timestamp and size are unchanged.
 
-Report the actual processed and failed row counts; do not prescribe expected counts before the rules run.
+Report the actual assessed and failed row counts; do not prescribe expected counts before the rules run.
 
 - [ ] **Step 6: Run formatting and diff checks**
 

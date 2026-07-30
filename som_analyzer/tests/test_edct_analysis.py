@@ -7,14 +7,32 @@ import unittest
 from contextlib import closing
 from datetime import date
 from pathlib import Path
+from xml.etree import ElementTree
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from som_analyzer.analysis.edct import EdctLoadError, export_edct_result, run_edct_analysis
-from som_analyzer.edct_config import EDCT_FORMULA_COLUMNS, EDCT_REQUIRED_COLUMNS
+from som_analyzer.edct_config import (
+    EDCT_COFOR_COLUMNS,
+    EDCT_DATED_COMMENT_COLUMNS,
+    EDCT_DATE_COLUMNS,
+    EDCT_EDI_MODE_VALUES,
+    EDCT_EMAIL_COLUMNS,
+    EDCT_FORMULA_COLUMNS,
+    EDCT_PHONE_DIGITS,
+    EDCT_PHONE_COLUMNS,
+    EDCT_PORTAL_COLUMNS,
+    EDCT_PORTAL_VALUES,
+    EDCT_REQUIRED_COLUMNS,
+    EDCT_RULE_CATALOGUE_ROWS,
+    EDCT_TRIPLE_STATUS_VALUES,
+    EDCT_UNCHECKED_COLUMNS,
+    EDCT_YES_NO_VALUES,
+)
 
 
 def build_edct_workbook(
@@ -70,6 +88,21 @@ def build_edct_workbook(
     return path
 
 
+def add_worksheet_extension(path: Path, marker: str) -> None:
+    replacement = path.with_suffix(".zip")
+    extension = (
+        f'<extLst><ext uri="{marker}"><test:payload xmlns:test="urn:test">'
+        "keep me</test:payload></ext></extLst>"
+    ).encode()
+    with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                content = content.replace(b"</worksheet>", extension + b"</worksheet>")
+            target.writestr(item, content)
+    replacement.replace(path)
+
+
 class EdctWorkbookTests(unittest.TestCase):
     def test_rule_documentation_lists_every_required_edct_column(self) -> None:
         documentation = (
@@ -80,6 +113,42 @@ class EdctWorkbookTests(unittest.TestCase):
         )[0]
         documented = set(re.findall(r"^- `([^`]+)`$", inventory, re.MULTILINE))
         self.assertEqual(documented, set(EDCT_REQUIRED_COLUMNS))
+
+    def test_rule_documentation_matches_formula_and_unchecked_configuration(self) -> None:
+        documentation = (
+            Path(__file__).resolve().parents[2] / "docs" / "EDCT_VALIDATION_RULES.md"
+        ).read_text(encoding="utf-8")
+        formula_section = documentation.split("## Formula rules", 1)[1].split(
+            "## Field rules", 1
+        )[0]
+        unchecked_section = documentation.split("## Explicitly unchecked fields", 1)[1].split(
+            "## Verified sample smoke", 1
+        )[0]
+        self.assertEqual(
+            set(re.findall(r"^- `([^`]+)`$", formula_section, re.MULTILINE)),
+            set(EDCT_FORMULA_COLUMNS),
+        )
+        self.assertEqual(
+            set(re.findall(r"^- `([^`]+)`$", unchecked_section, re.MULTILINE)),
+            set(EDCT_UNCHECKED_COLUMNS),
+        )
+        for configured_value in (
+            *EDCT_TRIPLE_STATUS_VALUES,
+            *EDCT_YES_NO_VALUES,
+            *EDCT_PORTAL_VALUES,
+            *EDCT_EDI_MODE_VALUES,
+        ):
+            self.assertIn(f"`{configured_value}`", documentation)
+        self.assertIn(f"{EDCT_PHONE_DIGITS[0]}-{EDCT_PHONE_DIGITS[1]} digits", documentation)
+        field_rules = documentation.split("## Field rules", 1)[1].split(
+            "## Explicitly unchecked fields", 1
+        )[0]
+        documented_rows = tuple(
+            line
+            for line in field_rules.splitlines()
+            if line.startswith("| `")
+        )
+        self.assertEqual(documented_rows, EDCT_RULE_CATALOGUE_ROWS)
 
     def test_complete_workbook_is_annotated_and_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -94,7 +163,7 @@ class EdctWorkbookTests(unittest.TestCase):
             exported = load_workbook(output_path, data_only=False)
             supplier = exported["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
-            self.assertEqual(result.processed_rows, (3, 4))
+            self.assertEqual(result.assessed_rows, (3, 4))
             self.assertEqual([row["project"] for row in runs], ["eDCT"])
             self.assertEqual([row["rows_total"] for row in runs], [2])
             self.assertEqual(exported.sheetnames, ["Supplier Level", "Open Task", "Other Sheet"])
@@ -108,6 +177,100 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertRegex(output_path.name, r"input_eDCT_checked_\d{8}_\d{6}\.xlsx")
             self.assertEqual(load_workbook(input_path)["Other Sheet"]["A1"].value, "keep me")
             exported.close()
+
+    def test_rerun_clears_results_for_rows_that_are_no_longer_assessed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(
+                directory,
+                row_overrides={3: {"Phone": "invalid"}},
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                first_result = run_edct_analysis(input_path, connection=connection)
+                first_output = export_edct_result(first_result, directory)
+
+                workbook = load_workbook(first_output)
+                supplier = workbook["Supplier Level"]
+                headers = [cell.value for cell in supplier[2]]
+                supplier.cell(3, headers.index("Index") + 1).value = None
+                rerun_input = directory / "rerun.xlsx"
+                workbook.save(rerun_input)
+                workbook.close()
+
+                second_result = run_edct_analysis(rerun_input, connection=connection)
+                second_output = export_edct_result(second_result, directory)
+
+            exported = load_workbook(second_output)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            self.assertIsNone(supplier.cell(3, headers.index("Check") + 1).value)
+            self.assertIsNone(supplier.cell(3, headers.index("Comment") + 1).value)
+            exported.close()
+
+    def test_existing_result_columns_are_brought_inside_the_result_table(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            workbook = load_workbook(input_path)
+            supplier = workbook["Supplier Level"]
+            supplier.cell(2, supplier.max_column + 1, "Check")
+            supplier.cell(2, supplier.max_column + 1, "Comment")
+            workbook.save(input_path)
+            workbook.close()
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                output = export_edct_result(result, directory)
+
+            exported = load_workbook(output)
+            table = exported["Supplier Level"].tables["Tabella2"]
+            min_col, _, max_col, _ = range_boundaries(table.ref)
+            self.assertEqual(len(table.tableColumns), max_col - min_col + 1)
+            self.assertEqual(
+                [column.name for column in table.tableColumns[-2:]],
+                ["Check", "Comment"],
+            )
+            exported.close()
+
+    def test_export_preserves_unsupported_worksheet_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            marker = "{EDCT-PRESERVATION-TEST}"
+            add_worksheet_extension(input_path, marker)
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                output = export_edct_result(result, directory)
+
+            with ZipFile(input_path) as source, ZipFile(output) as exported:
+                self.assertEqual(set(exported.namelist()), set(source.namelist()))
+                for name in source.namelist():
+                    if name not in {"xl/worksheets/sheet1.xml", "xl/tables/table1.xml"}:
+                        self.assertEqual(exported.read(name), source.read(name), name)
+                source_xml = source.read("xl/worksheets/sheet1.xml")
+                exported_xml = exported.read("xl/worksheets/sheet1.xml")
+
+            def extension_payload(xml: bytes) -> tuple:
+                root = ElementTree.fromstring(xml)
+                extension = next(
+                    element
+                    for element in root.iter()
+                    if element.tag.rsplit("}", 1)[-1] == "ext"
+                    and element.attrib.get("uri") == marker
+                )
+
+                def signature(element) -> tuple:
+                    return (
+                        element.tag,
+                        tuple(sorted(element.attrib.items())),
+                        (element.text or "").strip(),
+                        tuple(signature(child) for child in element),
+                    )
+
+                return signature(extension)
+
+            self.assertEqual(extension_payload(exported_xml), extension_payload(source_xml))
 
     def test_missing_required_sheet_stops_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -182,11 +345,165 @@ class EdctWorkbookTests(unittest.TestCase):
             "Participants",
         ):
             self.assertIn(column, result.row_results[3].comment)
+        self.assertIn("first@example.com, second@example.com", result.row_results[3].comment)
+        self.assertIn("Name - person@example.com", result.row_results[3].comment)
+
+    def test_email_phone_and_dated_comment_boundaries(self) -> None:
+        scenarios = (
+            ("single email", {"Participants": "one@example.com"}, 0),
+            ("email list", {"Participants": "one@example.com; two@example.org"}, 0),
+            ("comma-separated email", {"Participants": "one@example.com,two@example.org"}, 1),
+            ("display-name email", {"Participants": "Name <one@example.com>"}, 1),
+            ("empty email item", {"Participants": "one@example.com;"}, 1),
+            ("seven-digit phone", {"Phone": "1234567"}, 0),
+            ("formatted phone", {"Phone": "+(33) 1.23-45-67"}, 0),
+            ("six-digit phone", {"Phone": "123456"}, 1),
+            ("twenty-one-digit phone", {"Phone": "1" * 21}, 1),
+            ("slash general comment", {"Comments": "30/07/2026: ready"}, 0),
+            ("dot readiness comment", {"Readiness Comments": "30.07.2026: ready"}, 0),
+            ("slash readiness comment", {"Readiness Comments": "30/07/2026: ready"}, 1),
+        )
+        for label, overrides, expected_check in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(Path(temp), row_overrides={3: overrides})
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(
+                        path,
+                        connection=connection,
+                        analysis_date=date(2026, 7, 30),
+                    )
+                self.assertEqual(result.row_results[3].check, expected_check)
+
+    def test_catalogued_applicability_empty_and_accepted_value_policies(self) -> None:
+        valid_portals = {
+            "eSupplierConnect": "YES",
+            "B2B": "NOT",
+            "New supplier portal": "YES",
+            "SPM": "NOT",
+            "iTMS": "YES",
+        }
+        scenarios = (
+            ("conditional email before trigger", {"Sales contact": "invalid"}, 0),
+            (
+                "conditional email after trigger",
+                {
+                    "Effective kick-off date": "30.07.2026",
+                    "Sales contact": "invalid",
+                    **valid_portals,
+                },
+                1,
+            ),
+            ("conditional cofor before trigger", {"Seller COFOR": "invalid"}, 0),
+            (
+                "conditional cofor after trigger",
+                {
+                    "Effective kick-off date": "30.07.2026",
+                    "Seller COFOR": "invalid",
+                    **valid_portals,
+                },
+                1,
+            ),
+            (
+                "future effective date",
+                {
+                    "Effective kick-off date": "31.07.2026",
+                    **valid_portals,
+                },
+                1,
+            ),
+            ("triple status before trigger", {"Triple Status": ""}, 0),
+            (
+                "triple status after trigger",
+                {
+                    "Cofor created date": "30.07.2026",
+                    "Triple Status": "",
+                    "EDI Mode": "WEB EDI",
+                },
+                1,
+            ),
+            ("shipping location not required", {"Overseas": "NO", "Shipping location": ""}, 0),
+            ("shipping location required", {"Overseas": "YES", "Shipping location": ""}, 1),
+            ("supplier confirmation optional", {"Supplier Confimation": ""}, 0),
+            ("supplier confirmation invalid", {"Supplier Confimation": "NO"}, 1),
+            (
+                "portals required after trigger",
+                {"Effective kick-off date": "30.07.2026"},
+                len(EDCT_PORTAL_COLUMNS),
+            ),
+            ("edi mode before trigger", {"EDI Mode": ""}, 0),
+            (
+                "edi mode after trigger",
+                {
+                    "Cofor created date": "30.07.2026",
+                    "Triple Status": "Valid",
+                    "EDI Mode": "",
+                },
+                1,
+            ),
+        )
+        for label, overrides, expected_check in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(Path(temp), row_overrides={3: overrides})
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(
+                        path,
+                        connection=connection,
+                        analysis_date=date(2026, 7, 30),
+                    )
+                self.assertEqual(result.row_results[3].check, expected_check)
+
+    def test_every_configured_field_rule_reaches_exported_check_and_comment(self) -> None:
+        invalid_values = {
+            **{column: "invalid email" for column in EDCT_EMAIL_COLUMNS},
+            **{column: "invalid cofor" for column in EDCT_COFOR_COLUMNS},
+            **{column: "invalid phone" for column in EDCT_PHONE_COLUMNS},
+            **{column: "invalid date" for column in EDCT_DATE_COLUMNS},
+            **{column: "invalid comment" for column in EDCT_DATED_COMMENT_COLUMNS},
+            "Triple Status": "Valid",
+            "Overseas": "NO",
+            "Supplier Confimation": "YES",
+            "eSupplierConnect": "YES",
+            "B2B": "YES",
+            "New supplier portal": "YES",
+            "SPM": "YES",
+            "iTMS": "YES",
+            "EDI Mode": "WEB EDI",
+            "OPEN TASK": "YES",
+        }
+        expected_columns = (
+            *EDCT_EMAIL_COLUMNS,
+            *EDCT_COFOR_COLUMNS,
+            *EDCT_PHONE_COLUMNS,
+            *EDCT_DATE_COLUMNS,
+            *EDCT_DATED_COMMENT_COLUMNS,
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(directory, row_overrides={3: invalid_values})
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(
+                    path,
+                    connection=connection,
+                    analysis_date=date(2026, 7, 30),
+                )
+                output = export_edct_result(result, directory)
+
+            exported = load_workbook(output)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            check = supplier.cell(3, headers.index("Check") + 1).value
+            comment = supplier.cell(3, headers.index("Comment") + 1).value
+            exported.close()
+
+        self.assertEqual(check, len(expected_columns))
+        for column in expected_columns:
+            self.assertIn(f"{column} =", comment)
 
     def test_lifecycle_and_open_task_conditions_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
             path = build_edct_workbook(
-                Path(temp),
+                directory,
                 row_overrides={
                     3: {
                         "Cofor created date": "invalid date",
@@ -208,9 +525,24 @@ class EdctWorkbookTests(unittest.TestCase):
                     "SELECT column_name, fail_count FROM run_columns WHERE run_id = ?",
                     (result.run_id,),
                 ).fetchall()
+                output = export_edct_result(result, directory)
+
+            exported = load_workbook(output)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            exported_checks = [
+                supplier.cell(row, headers.index("Check") + 1).value
+                for row in (3, 4)
+            ]
+            exported_comments = [
+                supplier.cell(row, headers.index("Comment") + 1).value
+                for row in (3, 4)
+            ]
+            exported.close()
 
         self.assertEqual(result.row_results[3].check, 11)
         self.assertEqual(result.row_results[4].check, 1)
+        self.assertEqual(exported_checks, [11, 1])
         for column in (
             "Triple Status",
             "EDI Mode",
@@ -224,9 +556,11 @@ class EdctWorkbookTests(unittest.TestCase):
             "iTMS",
         ):
             self.assertIn(column, result.row_results[3].comment)
+            self.assertIn(column, exported_comments[0])
+        self.assertIn("OPEN TASK", exported_comments[1])
         self.assertEqual(sum(row["fail_count"] for row in totals), 12)
 
-    def test_formula_structure_uses_first_processed_row_as_reference(self) -> None:
+    def test_formula_structure_uses_formula_reference_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = build_edct_workbook(
                 Path(temp),
@@ -245,7 +579,56 @@ class EdctWorkbookTests(unittest.TestCase):
         self.assertIn("Starting date", result.row_results[4].comment)
         self.assertNotIn("Triplet COFOR", result.row_results[4].comment)
 
-    def test_missing_first_formula_flags_every_processed_row_and_continues(self) -> None:
+    def test_formula_comparison_rejects_every_material_change(self) -> None:
+        scenarios = (
+            ("constant", "manual"),
+            ("missing formula", None),
+            ("changed function", '=AND(A4="")'),
+            ("changed operator", '=IF(A4<>"","",A4)'),
+            ("changed reference", '=IF(B4="","",B4)'),
+            ("changed condition", '=IF(A4="x","",A4)'),
+            ("changed quoted value", '=IF(A4="","changed",A4)'),
+        )
+        for label, formula in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(
+                    Path(temp),
+                    row_overrides={4: {"Starting date": formula}},
+                )
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(
+                        path,
+                        connection=connection,
+                        analysis_date=date(2026, 7, 30),
+                    )
+                self.assertEqual(result.row_results[4].check, 1)
+                self.assertIn("Starting date", result.row_results[4].comment)
+
+    def test_every_formula_rule_reaches_exported_check_and_comment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(
+                directory,
+                row_overrides={
+                    4: {column: "=1" for column in EDCT_FORMULA_COLUMNS},
+                },
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                output = export_edct_result(result, directory)
+
+            exported = load_workbook(output)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            check = supplier.cell(4, headers.index("Check") + 1).value
+            comment = supplier.cell(4, headers.index("Comment") + 1).value
+            exported.close()
+
+        self.assertEqual(check, len(EDCT_FORMULA_COLUMNS))
+        for column in EDCT_FORMULA_COLUMNS:
+            self.assertIn(f"{column} =", comment)
+
+    def test_missing_formula_reference_flags_every_assessed_row_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = build_edct_workbook(
                 Path(temp),
@@ -255,7 +638,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 result = run_edct_analysis(path, connection=connection, analysis_date=date(2026, 7, 30))
 
         expected = (
-            "Formula validation failed: first processed row is missing "
+            "Formula validation failed: formula reference row is missing "
             "the reference formula for Starting date"
         )
         self.assertEqual(result.row_results[3].check, 1)

@@ -39,10 +39,10 @@ class SomAnalyzeController:
             raise RuntimeError("No analysis result to export")
         return export_result(self.current_result, output_file)
 
-    def history_runs(self):
+    def history_runs(self, project: str = "SOM"):
         if self.connection is None:
             return []
-        return list_runs(self.connection)
+        return list_runs(self.connection, project)
 
     def history_columns(self, run_id: int):
         if self.connection is None:

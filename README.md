@@ -1,6 +1,6 @@
-# SOM Quality Checker
+# SOM and eDCT Quality Checker
 
-This repository includes a modular analyzer package in `som_analyzer/`.
+This repository includes one desktop application with separate SOM and eDCT workbook-quality projects.
 
 ## Run the PyQt app
 
@@ -8,7 +8,14 @@ This repository includes a modular analyzer package in `som_analyzer/`.
 uv run python main.py
 ```
 
-The desktop app requires the user to choose an input workbook and an output folder before analysis starts.
+The app opens with a project selector:
+
+- **SOM Quality Checker** uses the existing SOM rules and workflow.
+- **eDCT Quality Checker** validates indexed rows on `Supplier Level`, cross-checks `Open Task`, and exports a preserved copy of the complete workbook.
+
+Both projects require the user to choose an input workbook and output folder. Their run histories are kept separate.
+
+See [eDCT validation rules](docs/EDCT_VALIDATION_RULES.md) for the complete eDCT rule catalogue.
 
 ## Package-local workflow
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from som_analyzer.analysis.loader import LoadError, load_excel
 from som_analyzer.analysis.runner import run_analysis
 from som_analyzer.analysis.validator import build_default_rules, normalize
 from som_analyzer.config import TEXT_COLUMNS, WANTED_COLUMNS
+from som_analyzer.db.repository import RunRecord, initialize_schema, insert_run, list_runs
 
 
 AS_OF = date(2026, 7, 15)
@@ -175,7 +177,7 @@ class IntegrationTests(unittest.TestCase):
                     row(Status="Pending", Contacted="NO", NOTE="", **{"Quality contact": ""}),
                 ]
             ).to_excel(input_path, index=False)
-            with sqlite3.connect(":memory:") as connection:
+            with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_analysis(input_path, connection=connection, analysis_date=AS_OF)
 
         self.assertEqual(len(result.in_scope_df), 2)
@@ -196,6 +198,55 @@ class IntegrationTests(unittest.TestCase):
                 load_excel(input_path)
         self.assertNotIn("Seller COFOR2", WANTED_COLUMNS)
         self.assertNotIn("Location ID2", WANTED_COLUMNS)
+
+    def test_history_migrates_existing_runs_to_som_and_filters_projects(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute(
+                """
+                CREATE TABLE runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT NOT NULL,
+                    duration_s REAL NOT NULL,
+                    input_file TEXT NOT NULL,
+                    exported_file TEXT,
+                    rows_total INTEGER NOT NULL,
+                    rows_in_scope INTEGER NOT NULL,
+                    rows_failed INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO runs (
+                    started_at, finished_at, duration_s, input_file, exported_file,
+                    rows_total, rows_in_scope, rows_failed, status, error_message
+                ) VALUES ('start', 'finish', 1, 'som.xlsx', NULL, 1, 1, 0, 'ok', NULL)
+                """
+            )
+            initialize_schema(connection)
+            insert_run(
+                connection,
+                RunRecord(
+                    project="eDCT",
+                    started_at="start",
+                    finished_at="finish",
+                    duration_s=1,
+                    input_file="edct.xlsx",
+                    exported_file=None,
+                    rows_total=1,
+                    rows_in_scope=1,
+                    rows_failed=0,
+                    status="ok",
+                ),
+                [],
+            )
+
+            self.assertEqual([run["input_file"] for run in list_runs(connection, "SOM")], ["som.xlsx"])
+            self.assertEqual([run["input_file"] for run in list_runs(connection, "eDCT")], ["edct.xlsx"])
 
 
 if __name__ == "__main__":

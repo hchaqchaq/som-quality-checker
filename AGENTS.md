@@ -40,13 +40,14 @@
 - Keep validation-driving constants centralized near the top of the notebook:
     - `WANTED_COLUMNS`, `LOCATION_COLUMNS`, `EMAIL_COLUMNS`, `CHAR_LENGTH_COLUMNS`, `CHAR_LENGTH_COLUMN_12`,
       `CONTACTED_ALLOWED_VALUES`.
-- Keep `som_analyzer/src/som_analyzer/config.py` as the central place for required columns, scope filters, and
-  `DEFAULT_RULE_DEFINITIONS`.
+- Keep SOM rules in `som_analyzer/src/som_analyzer/config.py`. Keep the independently configured eDCT workbook
+  boundary and rule targets in `som_analyzer/src/som_analyzer/edct_config.py`.
 - Preserve output columns `Check` and `Comment` whenever adding/changing rules.
 - For category checks (for example `Contacted`), normalize with `strip().lower()` before membership tests.
 - For location fields, keep validation through `is_valid_location` (regex-signal based), not just non-empty checks.
-- When adding a rule, thread it through `config.py` -> `analysis/validator.py` -> `analysis/runner.py` so it contributes
-  to both `Check` and `Comment` and, when applicable, run history totals.
+- When adding a SOM rule, thread it through `config.py` -> `analysis/validator.py` -> `analysis/runner.py`. Keep eDCT
+  rules on the existing `edct_config.py` -> `analysis/edct.py` path. Every rule must contribute to both `Check` and
+  `Comment` and, when applicable, run-history totals.
 - Keep scope filters normalized the same way as the GUI does in `som_analyzer/src/som_analyzer/gui/screens.py` (`Plant`,
   `Contacted`, and `Info completed` selected from the input workbook).
 - New rules should emit both:
@@ -84,3 +85,14 @@
   `som_analyzer/src/som_analyzer/db/repository.py` together, including the `exported_file` migration logic.
 - If you touch the GUI, preserve the split between `gui/app.py` (controller/app bootstrap) and `gui/screens.py` (
   widgets, workers, and history views).
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked as local Markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+This is a single-context repository using root `CONTEXT.md` and system-wide ADRs under `docs/adr/`. See
+`docs/agents/domain.md`.

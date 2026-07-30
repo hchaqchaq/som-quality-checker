@@ -94,6 +94,7 @@ def run_analysis(
     if connection is not None:
         initialize_schema(connection)
         run_record = RunRecord(
+            project="SOM",
             started_at=started_at.isoformat(),
             finished_at=finished_at.isoformat(),
             duration_s=duration_s,

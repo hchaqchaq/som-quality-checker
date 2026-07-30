@@ -11,6 +11,7 @@ from ..config import DB_PATH, ensure_data_dir
 
 @dataclass(slots=True)
 class RunRecord:
+    project: str
     started_at: str
     finished_at: str
     duration_s: float
@@ -42,8 +43,15 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     for statement in all_statements():
         connection.execute(statement)
 
+    _migrate_runs_project(connection)
     _migrate_runs_exported_file_nullable(connection)
     connection.commit()
+
+
+def _migrate_runs_project(connection: sqlite3.Connection) -> None:
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")}
+    if "project" not in columns:
+        connection.execute("ALTER TABLE runs ADD COLUMN project TEXT NOT NULL DEFAULT 'SOM'")
 
 
 def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None:
@@ -69,6 +77,7 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
     connection.execute(
         """
         INSERT INTO runs (id,
+                          project,
                           started_at,
                           finished_at,
                           duration_s,
@@ -80,6 +89,7 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
                           status,
                           error_message)
         SELECT id,
+               project,
                started_at,
                finished_at,
                duration_s,
@@ -133,7 +143,8 @@ def insert_run(
 ) -> int:
     cursor = connection.execute(
         """
-        INSERT INTO runs (started_at,
+        INSERT INTO runs (project,
+                          started_at,
                           finished_at,
                           duration_s,
                           input_file,
@@ -143,9 +154,10 @@ def insert_run(
                           rows_failed,
                           status,
                           error_message)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            run_record.project,
             run_record.started_at,
             run_record.finished_at,
             run_record.duration_s,
@@ -176,10 +188,11 @@ def insert_run(
     return run_id
 
 
-def list_runs(connection: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
+def list_runs(connection: sqlite3.Connection, project: str = "SOM", limit: int = 200) -> list[sqlite3.Row]:
     cursor = connection.execute(
         """
         SELECT id,
+               project,
                started_at,
                finished_at,
                duration_s,
@@ -191,9 +204,10 @@ def list_runs(connection: sqlite3.Connection, limit: int = 200) -> list[sqlite3.
                status,
                error_message
         FROM runs
+        WHERE project = ?
         ORDER BY id DESC LIMIT ?
         """,
-        (limit,),
+        (project, limit),
     )
     return list(cursor.fetchall())
 
@@ -220,4 +234,17 @@ def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
 
 def update_run_exported_file(connection: sqlite3.Connection, run_id: int, exported_file: str) -> None:
     connection.execute("UPDATE runs SET exported_file = ? WHERE id = ?", (exported_file, run_id))
+    connection.commit()
+
+
+def update_run_status(
+    connection: sqlite3.Connection,
+    run_id: int,
+    status: str,
+    error_message: str | None,
+) -> None:
+    connection.execute(
+        "UPDATE runs SET status = ?, error_message = ? WHERE id = ?",
+        (status, error_message, run_id),
+    )
     connection.commit()

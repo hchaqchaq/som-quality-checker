@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .app import SomAnalyzeController
+from ..analysis.edct import EdctRunResult, export_edct_result, run_edct_analysis
 from ..analysis.loader import load_excel
 from ..analysis.runner import RunResult, export_result, run_analysis
 from ..config import APP_LOGO_PATH, PREVIEW_ROWS, ScopeFilterDefinition
@@ -159,11 +160,188 @@ class AnalysisWorker(QObject):
             self.finished.emit(None, "", str(exc))
 
 
+class EdctAnalysisWorker(QObject):
+    finished = pyqtSignal(object, str, str)
+
+    def __init__(self, input_path: str, output_path: str) -> None:
+        super().__init__()
+        self.input_path = input_path
+        self.output_path = output_path
+
+    def run(self) -> None:
+        try:
+            result = run_edct_analysis(self.input_path)
+            exported_path = export_edct_result(result, self.output_path)
+            self.finished.emit(result, str(exported_path), "")
+        except Exception as exc:  # pragma: no cover - worker error path
+            self.finished.emit(None, "", str(exc))
+
+
+class ProjectSelectionPage(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.addStretch(1)
+        title = QLabel("Choose a Quality Checker")
+        title.setObjectName("pageTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        self.som_button = QPushButton("SOM Quality Checker")
+        self.som_button.setObjectName("accentButton")
+        self.edct_button = QPushButton("eDCT Quality Checker")
+        self.edct_button.setObjectName("accentButton")
+        layout.addWidget(self.som_button)
+        layout.addWidget(self.edct_button)
+        layout.addStretch(1)
+
+
+class EdctPage(QWidget):
+    preview_columns = ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment")
+
+    def __init__(self, controller: SomAnalyzeController) -> None:
+        super().__init__()
+        self.controller = controller
+        self._run_thread: QThread | None = None
+        self._run_worker: EdctAnalysisWorker | None = None
+        layout = QVBoxLayout(self)
+        self.back_button = QPushButton("Back to projects")
+        layout.addWidget(self.back_button)
+        title = QLabel("eDCT Quality Checker")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+
+        input_row = QHBoxLayout()
+        self.input_file = QLineEdit()
+        self.input_file.setReadOnly(True)
+        self.input_file.setPlaceholderText("Choose an eDCT input workbook")
+        self.pick_input_button = QPushButton("Choose Input File")
+        input_row.addWidget(self.input_file)
+        input_row.addWidget(self.pick_input_button)
+        layout.addLayout(input_row)
+
+        output_row = QHBoxLayout()
+        self.output_dir = QLineEdit()
+        self.output_dir.setReadOnly(True)
+        self.output_dir.setPlaceholderText("Choose an output folder")
+        self.pick_output_button = QPushButton("Choose Output Folder")
+        output_row.addWidget(self.output_dir)
+        output_row.addWidget(self.pick_output_button)
+        layout.addLayout(output_row)
+
+        self.run_button = QPushButton("Run Analysis")
+        self.run_button.setObjectName("accentButton")
+        layout.addWidget(self.run_button)
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setRange(0, 0)
+        self.loading_bar.hide()
+        layout.addWidget(self.loading_bar)
+        self.status = QLabel("Ready")
+        layout.addWidget(self.status)
+        self.result_path = QLineEdit()
+        self.result_path.setReadOnly(True)
+        self.result_path.setPlaceholderText("The exported workbook path will appear here")
+        layout.addWidget(self.result_path)
+
+        self.preview_table = QTableWidget()
+        self.preview_table.setColumnCount(len(self.preview_columns))
+        self.preview_table.setHorizontalHeaderLabels(self.preview_columns)
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview_table.setAlternatingRowColors(True)
+        layout.addWidget(self.preview_table)
+        self.history_page = HistoryPage(controller, "eDCT")
+        layout.addWidget(self.history_page)
+
+        self.pick_input_button.clicked.connect(self._pick_input)
+        self.pick_output_button.clicked.connect(self._pick_output)
+        self.run_button.clicked.connect(self._run)
+
+    def _pick_input(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose eDCT input workbook",
+            str(Path.home()),
+            "Excel files (*.xlsx *.xlsm)",
+        )
+        if selected:
+            self.input_file.setText(selected)
+
+    def _pick_output(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose output folder",
+            self.output_dir.text().strip() or str(Path.home()),
+        )
+        if selected:
+            self.output_dir.setText(selected)
+
+    def _run(self) -> None:
+        if self._run_thread is not None:
+            return
+        input_path = self.input_file.text().strip()
+        output_path = self.output_dir.text().strip()
+        if not input_path or not output_path:
+            self.status.setText("Choose an input workbook and output folder.")
+            return
+        self.run_button.setEnabled(False)
+        self.loading_bar.show()
+        self.status.setText("Analysis started...")
+        self._run_thread = QThread(self)
+        self._run_worker = EdctAnalysisWorker(input_path, output_path)
+        self._run_worker.moveToThread(self._run_thread)
+        self._run_thread.started.connect(self._run_worker.run)
+        self._run_worker.finished.connect(self._finished)
+        self._run_worker.finished.connect(self._run_thread.quit)
+        self._run_worker.finished.connect(self._run_worker.deleteLater)
+        self._run_thread.finished.connect(self._run_thread.deleteLater)
+        self._run_thread.finished.connect(self._clear_worker)
+        self._run_thread.start()
+
+    def _finished(self, result: object, exported_path: str, error: str) -> None:
+        self.run_button.setEnabled(True)
+        self.loading_bar.hide()
+        if error or result is None:
+            self.status.setText(f"Run failed: {error or 'unknown error'}")
+            return
+        run_result = cast(EdctRunResult, result)
+        self.result_path.setText(exported_path)
+        self.status.setText(
+            f"Run {run_result.run_id} finished | rows: {len(run_result.processed_rows)} | "
+            f"failed: {run_result.rows_failed}"
+        )
+        self._fill_preview(run_result)
+        self.history_page.refresh_runs()
+
+    def _fill_preview(self, result: EdctRunResult) -> None:
+        worksheet = result.workbook["Supplier Level"]
+        headers = {
+            str(cell.value).strip(): cell.column
+            for cell in worksheet[2]
+            if cell.value is not None
+        }
+        rows = result.processed_rows[:PREVIEW_ROWS]
+        self.preview_table.setRowCount(len(rows))
+        for display_row, workbook_row in enumerate(rows):
+            values = (
+                worksheet.cell(workbook_row, headers["Index"]).value,
+                worksheet.cell(workbook_row, headers["Supplier Punch code"]).value,
+                worksheet.cell(workbook_row, headers["Supplier name"]).value,
+                result.row_results[workbook_row].check,
+                result.row_results[workbook_row].comment,
+            )
+            for column, value in enumerate(values):
+                self.preview_table.setItem(display_row, column, QTableWidgetItem(str(value)))
+        self.preview_table.resizeColumnsToContents()
+
+    def _clear_worker(self) -> None:
+        self._run_worker = None
+        self._run_thread = None
+
+
 class MainWindow(QMainWindow):
     def __init__(self, controller: SomAnalyzeController) -> None:
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SOM Quality Checker")
+        self.setWindowTitle("Quality Checker")
         if APP_LOGO_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_LOGO_PATH)))
         self.resize(1180, 760)
@@ -173,9 +351,21 @@ class MainWindow(QMainWindow):
         root.setObjectName("appShell")
         self.setCentralWidget(root)
 
-        layout = QHBoxLayout(root)
+        layout = QVBoxLayout(root)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(14)
+        self.pages = QStackedWidget()
+        layout.addWidget(self.pages)
+
+        self.project_page = ProjectSelectionPage()
+        self.som_shell = QWidget()
+        self.edct_page = EdctPage(controller)
+        self.pages.addWidget(self.project_page)
+        self.pages.addWidget(self.som_shell)
+        self.pages.addWidget(self.edct_page)
+
+        som_layout = QHBoxLayout(self.som_shell)
+        som_layout.setContentsMargins(0, 0, 0, 0)
+        som_layout.setSpacing(14)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebarPanel")
@@ -215,6 +405,8 @@ class MainWindow(QMainWindow):
         self.menu.addItem(QListWidgetItem("History"))
         self.menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sidebar_layout.addWidget(self.menu)
+        self.som_back_button = QPushButton("Back to projects")
+        sidebar_layout.addWidget(self.som_back_button)
         sidebar_layout.addStretch(1)
 
         title_width = nav_title.sizeHint().width()
@@ -223,20 +415,25 @@ class MainWindow(QMainWindow):
         self.menu.setFixedWidth(content_width)
         sidebar.setFixedWidth(
             content_width + sidebar_layout.contentsMargins().left() + sidebar_layout.contentsMargins().right())
-        layout.addWidget(sidebar)
+        som_layout.addWidget(sidebar)
 
-        self.pages = QStackedWidget()
-        self.pages.setObjectName("pageSurface")
+        self.som_pages = QStackedWidget()
+        self.som_pages.setObjectName("pageSurface")
         self.welcome_page = WelcomePage(controller)
-        self.history_page = HistoryPage(controller)
-        self.pages.addWidget(self._wrap_page(self.welcome_page))
-        self.pages.addWidget(self._wrap_page(self.history_page))
-        layout.addWidget(self.pages)
-        layout.setStretch(0, 0)
-        layout.setStretch(1, 1)
+        self.history_page = HistoryPage(controller, "SOM")
+        self.som_pages.addWidget(self._wrap_page(self.welcome_page))
+        self.som_pages.addWidget(self._wrap_page(self.history_page))
+        som_layout.addWidget(self.som_pages)
+        som_layout.setStretch(0, 0)
+        som_layout.setStretch(1, 1)
 
         self.menu.currentRowChanged.connect(self._on_menu_changed)
         self.menu.setCurrentRow(0)
+        self.project_page.som_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.som_shell))
+        self.project_page.edct_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.edct_page))
+        self.edct_page.back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
+        self.som_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
+        self.pages.setCurrentWidget(self.project_page)
 
     def _wrap_page(self, page: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -247,7 +444,7 @@ class MainWindow(QMainWindow):
         return scroll
 
     def _on_menu_changed(self, index: int) -> None:
-        self.pages.setCurrentIndex(index)
+        self.som_pages.setCurrentIndex(index)
         if index == 1:
             self.history_page.refresh_runs()
 
@@ -558,9 +755,10 @@ class WelcomePage(QWidget):
 
 
 class HistoryPage(QWidget):
-    def __init__(self, controller: SomAnalyzeController, parent: QWidget | None = None) -> None:
+    def __init__(self, controller: SomAnalyzeController, project: str = "SOM", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.controller = controller
+        self.project = project
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -670,7 +868,7 @@ class HistoryPage(QWidget):
         table.setItem(row, column, item)
 
     def refresh_runs(self) -> None:
-        rows = self.controller.history_runs()
+        rows = self.controller.history_runs(self.project)
         headers = [
             "id",
             "started_at",

@@ -166,6 +166,22 @@ def _run_som(
     return result, export_result(result, output_path)
 
 
+def _create_section_card(title: str, hint: str) -> QFrame:
+    card = QFrame()
+    card.setObjectName("sectionCard")
+    card_layout = QVBoxLayout(card)
+    card_layout.setContentsMargins(14, 14, 14, 14)
+    card_layout.setSpacing(8)
+
+    title_label = QLabel(title)
+    title_label.setObjectName("sectionTitle")
+    hint_label = QLabel(hint)
+    hint_label.setObjectName("sectionHint")
+    card_layout.addWidget(title_label)
+    card_layout.addWidget(hint_label)
+    return card
+
+
 class ProjectSelectionPage(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -187,58 +203,92 @@ class ProjectSelectionPage(QWidget):
 class EdctPage(QWidget):
     preview_columns = ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment")
 
-    def __init__(self, controller: SomAnalyzeController) -> None:
+    def __init__(self, controller: SomAnalyzeController, history_page: HistoryPage) -> None:
         super().__init__()
         self.controller = controller
+        self.history_page = history_page
         self._run_thread: QThread | None = None
         self._run_worker: AnalysisWorker | None = None
         layout = QVBoxLayout(self)
-        self.back_button = QPushButton("Back to projects")
-        layout.addWidget(self.back_button)
-        title = QLabel("eDCT Quality Checker")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
 
+        hero_panel = QFrame()
+        hero_panel.setObjectName("heroPanel")
+        hero_layout = QVBoxLayout(hero_panel)
+        hero_layout.setContentsMargins(16, 16, 16, 16)
+        hero_layout.setSpacing(4)
+        title = QLabel("eDCT Quality Review")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("Run workbook validation, review flagged rows, and export clean results.")
+        subtitle.setObjectName("pageSubtitle")
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero_panel)
+
+        input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
+        input_card_layout = cast(QVBoxLayout, input_card.layout())
+
+        input_card_layout.addWidget(QLabel("Input workbook:"))
         input_row = QHBoxLayout()
         self.input_file = QLineEdit()
         self.input_file.setReadOnly(True)
         self.input_file.setPlaceholderText("Choose an eDCT input workbook")
         self.pick_input_button = QPushButton("Choose Input File")
+        self.pick_input_button.setObjectName("accentButton")
         input_row.addWidget(self.input_file)
         input_row.addWidget(self.pick_input_button)
-        layout.addLayout(input_row)
+        input_card_layout.addLayout(input_row)
 
+        input_card_layout.addWidget(QLabel("Output folder:"))
         output_row = QHBoxLayout()
         self.output_dir = QLineEdit()
         self.output_dir.setReadOnly(True)
         self.output_dir.setPlaceholderText("Choose an output folder")
         self.pick_output_button = QPushButton("Choose Output Folder")
+        self.pick_output_button.setObjectName("accentButton")
         output_row.addWidget(self.output_dir)
         output_row.addWidget(self.pick_output_button)
-        layout.addLayout(output_row)
+        input_card_layout.addLayout(output_row)
+        layout.addWidget(input_card)
 
+        analysis_card = _create_section_card("Analysis", "Assess the workbook and export an annotated copy.")
+        analysis_layout = cast(QVBoxLayout, analysis_card.layout())
         self.run_button = QPushButton("Run Analysis")
         self.run_button.setObjectName("accentButton")
-        layout.addWidget(self.run_button)
+        analysis_layout.addWidget(self.run_button)
         self.loading_bar = QProgressBar()
         self.loading_bar.setRange(0, 0)
         self.loading_bar.hide()
-        layout.addWidget(self.loading_bar)
+        analysis_layout.addWidget(self.loading_bar)
         self.status = QLabel("Ready")
-        layout.addWidget(self.status)
-        self.result_path = QLineEdit()
-        self.result_path.setReadOnly(True)
-        self.result_path.setPlaceholderText("The exported workbook path will appear here")
-        layout.addWidget(self.result_path)
+        self.status.setObjectName("statusInfo")
+        analysis_layout.addWidget(self.status)
+        layout.addWidget(analysis_card)
 
+        preview_card = _create_section_card("Preview", "First rows from the latest analysis workbook.")
+        preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        preview_layout = cast(QVBoxLayout, preview_card.layout())
         self.preview_table = QTableWidget()
         self.preview_table.setColumnCount(len(self.preview_columns))
         self.preview_table.setHorizontalHeaderLabels(self.preview_columns)
         self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.preview_table.setAlternatingRowColors(True)
-        layout.addWidget(self.preview_table)
-        self.history_page = HistoryPage(controller, "eDCT")
-        layout.addWidget(self.history_page)
+        self.preview_table.horizontalHeader().setStretchLastSection(True)
+        self.preview_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.preview_table.setMinimumHeight(200)
+        preview_layout.addWidget(self.preview_table)
+        layout.addWidget(preview_card)
+
+        result_card = _create_section_card("Export", "Latest exported workbook path.")
+        result_layout = cast(QVBoxLayout, result_card.layout())
+        result_layout.addWidget(QLabel("Result stored at:"))
+        self.result_path = QLineEdit()
+        self.result_path.setReadOnly(True)
+        self.result_path.setPlaceholderText("The exported workbook path will appear here")
+        result_layout.addWidget(self.result_path)
+        layout.addWidget(result_card)
+        layout.setStretch(3, 1)
 
         self.pick_input_button.clicked.connect(self._pick_input)
         self.pick_output_button.clicked.connect(self._pick_output)
@@ -347,10 +397,12 @@ class MainWindow(QMainWindow):
 
         self.project_page = ProjectSelectionPage()
         self.som_shell = QWidget()
-        self.edct_page = EdctPage(controller)
+        self.edct_shell = QWidget()
+        self.edct_history_page = HistoryPage(controller, "eDCT")
+        self.edct_page = EdctPage(controller, self.edct_history_page)
         self.pages.addWidget(self.project_page)
         self.pages.addWidget(self.som_shell)
-        self.pages.addWidget(self.edct_page)
+        self.pages.addWidget(self.edct_shell)
 
         som_layout = QHBoxLayout(self.som_shell)
         som_layout.setContentsMargins(0, 0, 0, 0)
@@ -416,11 +468,76 @@ class MainWindow(QMainWindow):
         som_layout.setStretch(0, 0)
         som_layout.setStretch(1, 1)
 
+        edct_layout = QHBoxLayout(self.edct_shell)
+        edct_layout.setContentsMargins(0, 0, 0, 0)
+        edct_layout.setSpacing(14)
+
+        self.edct_sidebar = QFrame()
+        self.edct_sidebar.setObjectName("sidebarPanel")
+        edct_sidebar_layout = QVBoxLayout(self.edct_sidebar)
+        edct_sidebar_layout.setContentsMargins(12, 14, 12, 14)
+        edct_sidebar_layout.setSpacing(10)
+
+        if APP_LOGO_PATH.exists():
+            edct_logo_frame = QFrame()
+            edct_logo_frame.setObjectName("sidebarLogoFrame")
+            edct_logo_layout = QVBoxLayout(edct_logo_frame)
+            edct_logo_layout.setContentsMargins(10, 10, 10, 10)
+            edct_logo_layout.setSpacing(0)
+
+            edct_logo = QLabel()
+            edct_logo.setObjectName("sidebarLogo")
+            edct_logo.setPixmap(
+                QPixmap(str(APP_LOGO_PATH)).scaled(
+                    126,
+                    126,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            edct_logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            edct_logo_layout.addWidget(edct_logo)
+            edct_sidebar_layout.addWidget(edct_logo_frame)
+
+        edct_title = QLabel("eDCT Checker")
+        edct_title.setObjectName("sectionTitle")
+        edct_title.setStyleSheet("color: #ffffff;")
+        edct_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        edct_sidebar_layout.addWidget(edct_title)
+
+        self.edct_menu = QListWidget()
+        self.edct_menu.addItem(QListWidgetItem("Welcome"))
+        self.edct_menu.addItem(QListWidgetItem("History"))
+        self.edct_menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        edct_sidebar_layout.addWidget(self.edct_menu)
+        self.edct_back_button = QPushButton("Back to projects")
+        edct_sidebar_layout.addWidget(self.edct_back_button)
+        edct_sidebar_layout.addStretch(1)
+
+        edct_content_width = max(edct_title.sizeHint().width(), self.edct_menu.sizeHintForColumn(0) + 34, 142)
+        self.edct_menu.setFixedWidth(edct_content_width)
+        self.edct_sidebar.setFixedWidth(
+            edct_content_width
+            + edct_sidebar_layout.contentsMargins().left()
+            + edct_sidebar_layout.contentsMargins().right()
+        )
+        edct_layout.addWidget(self.edct_sidebar)
+
+        self.edct_pages = QStackedWidget()
+        self.edct_pages.setObjectName("pageSurface")
+        self.edct_pages.addWidget(self._wrap_page(self.edct_page))
+        self.edct_pages.addWidget(self._wrap_page(self.edct_history_page))
+        edct_layout.addWidget(self.edct_pages)
+        edct_layout.setStretch(0, 0)
+        edct_layout.setStretch(1, 1)
+
         self.menu.currentRowChanged.connect(self._on_menu_changed)
         self.menu.setCurrentRow(0)
         self.project_page.som_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.som_shell))
-        self.project_page.edct_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.edct_page))
-        self.edct_page.back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
+        self.project_page.edct_button.clicked.connect(self._show_edct)
+        self.edct_menu.currentRowChanged.connect(self._on_edct_menu_changed)
+        self.edct_menu.setCurrentRow(0)
+        self.edct_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
         self.som_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
         self.pages.setCurrentWidget(self.project_page)
 
@@ -436,6 +553,15 @@ class MainWindow(QMainWindow):
         self.som_pages.setCurrentIndex(index)
         if index == 1:
             self.history_page.refresh_runs()
+
+    def _show_edct(self) -> None:
+        self.edct_menu.setCurrentRow(0)
+        self.pages.setCurrentWidget(self.edct_shell)
+
+    def _on_edct_menu_changed(self, index: int) -> None:
+        self.edct_pages.setCurrentIndex(index)
+        if index == 1:
+            self.edct_history_page.refresh_runs()
 
 
 class WelcomePage(QWidget):
@@ -464,7 +590,7 @@ class WelcomePage(QWidget):
         hero_layout.addWidget(hero_subtitle)
         layout.addWidget(hero_panel)
 
-        input_card = self._create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
+        input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
         input_card_layout = cast(QVBoxLayout, input_card.layout())
 
         input_card_layout.addWidget(QLabel("Input workbook:"))
@@ -491,7 +617,7 @@ class WelcomePage(QWidget):
 
         layout.addWidget(input_card)
 
-        filters_card = self._create_section_card(
+        filters_card = _create_section_card(
             "Filters",
             "Quality checks run only on rows matching these selected values.",
         )
@@ -539,7 +665,7 @@ class WelcomePage(QWidget):
         self.status.setObjectName("statusInfo")
         layout.addWidget(self.status)
 
-        preview_card = self._create_section_card("Preview", "First five rows from the latest output workbook.")
+        preview_card = _create_section_card("Preview", "First five rows from the latest output workbook.")
         preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_card_layout = cast(QVBoxLayout, preview_card.layout())
         self.preview_table = QTableWidget()
@@ -551,7 +677,7 @@ class WelcomePage(QWidget):
         preview_card_layout.addWidget(self.preview_table)
         layout.addWidget(preview_card)
 
-        result_card = self._create_section_card("Export", "Latest exported workbook path.")
+        result_card = _create_section_card("Export", "Latest exported workbook path.")
         result_card_layout = cast(QVBoxLayout, result_card.layout())
         result_card_layout.addWidget(QLabel("Result stored at:"))
         self.result_path_value = QLineEdit("")
@@ -576,22 +702,6 @@ class WelcomePage(QWidget):
         combo.setEnabled(False)
         combo.reset(placeholder)
         return combo
-
-    def _create_section_card(self, title: str, hint: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("sectionCard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 14, 14, 14)
-        card_layout.setSpacing(8)
-
-        title_label = QLabel(title)
-        title_label.setObjectName("sectionTitle")
-        hint_label = QLabel(hint)
-        hint_label.setObjectName("sectionHint")
-
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(hint_label)
-        return card
 
     def _set_status(self, text: str, level: str = "info") -> None:
         self.status_level = level

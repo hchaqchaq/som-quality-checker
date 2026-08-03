@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .schema import all_statements
+from .schema import SCHEMA_STATEMENTS
 from ..config import DB_PATH, ensure_data_dir
 
 
@@ -40,7 +40,7 @@ def open_connection(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
 
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
-    for statement in all_statements():
+    for statement in SCHEMA_STATEMENTS:
         connection.execute(statement)
 
     _migrate_runs_project(connection)
@@ -70,7 +70,7 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
     connection.commit()
     connection.execute("PRAGMA foreign_keys = OFF")
     connection.execute("ALTER TABLE runs RENAME TO runs_old")
-    for statement in all_statements():
+    for statement in SCHEMA_STATEMENTS:
         if "CREATE TABLE IF NOT EXISTS runs" in statement:
             connection.execute(statement)
 
@@ -108,7 +108,7 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
     cursor = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_columns'")
     if cursor.fetchone() is not None:
         connection.execute("ALTER TABLE run_columns RENAME TO run_columns_old")
-        for statement in all_statements():
+        for statement in SCHEMA_STATEMENTS:
             if "CREATE TABLE IF NOT EXISTS run_columns" in statement:
                 connection.execute(statement)
         connection.execute(
@@ -128,7 +128,7 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
         )
         connection.execute("DROP TABLE run_columns_old")
 
-    for statement in all_statements():
+    for statement in SCHEMA_STATEMENTS:
         if "CREATE INDEX" in statement:
             connection.execute(statement)
 

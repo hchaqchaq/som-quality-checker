@@ -61,9 +61,9 @@
 
 ## Dependencies and Integrations
 
-- Runtime deps in `pyproject.toml` / `som_analyzer/pyproject.toml`: `pandas`, `openpyxl`, `PyQt6`, `xlsxwriter`; Python
+- Runtime deps in `pyproject.toml` / `som_analyzer/pyproject.toml`: `pandas`, `openpyxl`, `PyQt6`; Python
   `>=3.12`.
-- `openpyxl` is required for Excel IO and `xlsxwriter` is used by `analysis/runner.py` when exporting workbooks.
+- `openpyxl` is required for Excel IO and export.
 - `uv.lock` indicates `uv` workflow is expected for reproducible environments.
 - `som_analyzer/pyproject.toml` defines the `som-analyze` GUI entry point and the `som-analyze-smoke` CLI smoke test.
 
@@ -93,6 +93,10 @@
 ### Issue tracker
 
 Issues and specs are tracked as local Markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five default canonical labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

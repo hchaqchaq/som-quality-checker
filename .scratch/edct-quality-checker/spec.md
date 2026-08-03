@@ -118,4 +118,3 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 - `materials/eDCT_input.xlsx` is development evidence, not a hardcoded runtime input.
 - `materials/edct_vallidation_rules.xlsx.xlsx` remains the legacy non-runtime source despite its spelling and duplicate extension.
 - The Markdown catalogue documents every active field, condition, empty-value policy, accepted format/value, and failure behavior, plus excluded fields.
-- The detailed implementation sequence is in `docs/superpowers/plans/2026-07-30-edct-quality-checker.md`.

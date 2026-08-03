@@ -7,6 +7,7 @@ import unittest
 from contextlib import closing
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -15,6 +16,7 @@ from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+from som_analyzer.analysis import edct as edct_analysis
 from som_analyzer.analysis.edct import EdctLoadError, export_edct_result, run_edct_analysis
 from som_analyzer.edct_config import (
     EDCT_COFOR_COLUMNS,
@@ -103,6 +105,67 @@ def add_worksheet_extension(path: Path, marker: str) -> None:
     replacement.replace(path)
 
 
+def corrupt_first_cell_style(path: Path) -> None:
+    replacement = path.with_suffix(".zip")
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                root = ElementTree.fromstring(content)
+                cell = root.find(f".//{{{namespace}}}c")
+                if cell is None:
+                    raise AssertionError("Generated worksheet has no cells to corrupt")
+                cell.set("s", "999999")
+                content = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            target.writestr(item, content)
+    replacement.replace(path)
+
+
+def remap_table_relationship(path: Path, relationship_id: str) -> None:
+    replacement = path.with_suffix(".zip")
+    relationship_attribute = (
+        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    )
+    with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
+        relationship_root = ElementTree.fromstring(
+            source.read("xl/worksheets/_rels/sheet1.xml.rels")
+        )
+        table_relationship = next(
+            relationship
+            for relationship in relationship_root
+            if relationship.attrib["Type"].endswith("/table")
+        )
+        original_id = table_relationship.attrib["Id"]
+        table_relationship.set("Id", relationship_id)
+
+        worksheet_root = ElementTree.fromstring(source.read("xl/worksheets/sheet1.xml"))
+        table_part = next(
+            element
+            for element in worksheet_root.iter()
+            if element.tag.rsplit("}", 1)[-1] == "tablePart"
+            and element.attrib[relationship_attribute] == original_id
+        )
+        table_part.set(relationship_attribute, relationship_id)
+
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "xl/worksheets/_rels/sheet1.xml.rels":
+                content = ElementTree.tostring(
+                    relationship_root,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+            elif item.filename == "xl/worksheets/sheet1.xml":
+                content = ElementTree.tostring(
+                    worksheet_root,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+            target.writestr(item, content)
+    replacement.replace(path)
+
+
 class EdctWorkbookTests(unittest.TestCase):
     def test_rule_documentation_lists_every_required_edct_column(self) -> None:
         documentation = (
@@ -176,6 +239,38 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertTrue(supplier.tables["Tabella2"].ref.endswith(get_column_letter(len(headers)) + "5"))
             self.assertRegex(output_path.name, r"input_eDCT_checked_\d{8}_\d{6}\.xlsx")
             self.assertEqual(load_workbook(input_path)["Other Sheet"]["A1"].value, "keep me")
+            exported.close()
+
+    def test_export_includes_styles_created_during_annotation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                worksheet = result.workbook["Supplier Level"]
+                style_source = worksheet.max_column
+                for row in range(2, worksheet.max_row + 1):
+                    worksheet.cell(row, style_source).fill = PatternFill(
+                        "solid",
+                        fgColor="00FF00",
+                    )
+                output_path = export_edct_result(result, directory)
+
+            exported = load_workbook(output_path)
+            exported.close()
+
+    def test_export_preserves_source_table_relationship_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            remap_table_relationship(input_path, "rId99")
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                output_path = export_edct_result(result, directory)
+
+            exported = load_workbook(output_path)
+            self.assertIn("Tabella2", exported["Supplier Level"].tables)
             exported.close()
 
     def test_rerun_clears_results_for_rows_that_are_no_longer_assessed(self) -> None:
@@ -309,6 +404,39 @@ class EdctWorkbookTests(unittest.TestCase):
 
         self.assertEqual(run["status"], "failed")
         self.assertTrue(run["error_message"])
+
+    def test_corrupt_analysis_workbook_is_removed_and_run_is_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(directory)
+            connection = sqlite3.connect(":memory:")
+            connection.row_factory = sqlite3.Row
+            try:
+                result = run_edct_analysis(path, connection=connection)
+                original_merge = edct_analysis._merge_annotated_parts
+
+                def merge_then_corrupt(*args, **kwargs) -> None:
+                    original_merge(*args, **kwargs)
+                    corrupt_first_cell_style(args[2])
+
+                with (
+                    patch.object(edct_analysis, "_merge_annotated_parts", merge_then_corrupt),
+                    self.assertRaisesRegex(
+                        EdctLoadError,
+                        "Analysis workbook validation failed",
+                    ),
+                ):
+                    export_edct_result(result, directory)
+                run = connection.execute(
+                    "SELECT status, error_message FROM runs WHERE id = ?",
+                    (result.run_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(list(directory.glob("*_eDCT_checked_*.xlsx")), [])
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("Analysis workbook validation failed", run["error_message"])
 
     def test_field_formats_are_reported_with_exact_column_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

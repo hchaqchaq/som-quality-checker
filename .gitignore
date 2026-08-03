@@ -8,7 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
-.idea/
+.idea/*
+!.idea/runConfigurations/
+!.idea/runConfigurations/SOM_Quality_Checker.xml
 dist/
 build/
 *.spec

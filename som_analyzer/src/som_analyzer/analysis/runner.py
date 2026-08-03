@@ -135,7 +135,7 @@ def run_analysis(
 def export_result(result: RunResult, output_path: Path | str) -> Path:
     target = _build_export_target(result.input_file, output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    result.final_df.to_excel(target, index=False, engine="xlsxwriter", merge_cells=False)
+    result.final_df.to_excel(target, index=False, engine="openpyxl", merge_cells=False)
 
     if result.run_id >= 0:
         connection = open_connection(DB_PATH)

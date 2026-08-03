@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QLineEdit,
     QMainWindow,
     QProgressBar,
@@ -180,6 +179,53 @@ def _create_section_card(title: str, hint: str) -> QFrame:
     card_layout.addWidget(title_label)
     card_layout.addWidget(hint_label)
     return card
+
+
+def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
+    sidebar = QFrame()
+    sidebar.setObjectName("sidebarPanel")
+    layout = QVBoxLayout(sidebar)
+    layout.setContentsMargins(12, 14, 12, 14)
+    layout.setSpacing(10)
+
+    if APP_LOGO_PATH.exists():
+        logo_frame = QFrame()
+        logo_frame.setObjectName("sidebarLogoFrame")
+        logo_layout = QVBoxLayout(logo_frame)
+        logo_layout.setContentsMargins(10, 10, 10, 10)
+        logo_layout.setSpacing(0)
+        logo = QLabel()
+        logo.setObjectName("sidebarLogo")
+        logo.setPixmap(
+            QPixmap(str(APP_LOGO_PATH)).scaled(
+                126,
+                126,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        logo_layout.addWidget(logo)
+        layout.addWidget(logo_frame)
+
+    title_label = QLabel(title)
+    title_label.setObjectName("sectionTitle")
+    title_label.setStyleSheet("color: #ffffff;")
+    title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+    layout.addWidget(title_label)
+
+    menu = QListWidget()
+    menu.addItems(("Welcome", "History"))
+    menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    layout.addWidget(menu)
+    back_button = QPushButton("Back to projects")
+    layout.addWidget(back_button)
+    layout.addStretch(1)
+
+    content_width = max(title_label.sizeHint().width(), menu.sizeHintForColumn(0) + 34, 142)
+    menu.setFixedWidth(content_width)
+    sidebar.setFixedWidth(content_width + layout.contentsMargins().left() + layout.contentsMargins().right())
+    return sidebar, menu, back_button
 
 
 class ProjectSelectionPage(QWidget):
@@ -408,54 +454,7 @@ class MainWindow(QMainWindow):
         som_layout.setContentsMargins(0, 0, 0, 0)
         som_layout.setSpacing(14)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebarPanel")
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(12, 14, 12, 14)
-        sidebar_layout.setSpacing(10)
-
-        if APP_LOGO_PATH.exists():
-            logo_frame = QFrame()
-            logo_frame.setObjectName("sidebarLogoFrame")
-            logo_frame_layout = QVBoxLayout(logo_frame)
-            logo_frame_layout.setContentsMargins(10, 10, 10, 10)
-            logo_frame_layout.setSpacing(0)
-
-            logo = QLabel()
-            logo.setObjectName("sidebarLogo")
-            logo.setPixmap(
-                QPixmap(str(APP_LOGO_PATH)).scaled(
-                    126,
-                    126,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-            logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            logo_frame_layout.addWidget(logo)
-            sidebar_layout.addWidget(logo_frame)
-
-        nav_title = QLabel("SOM Checker")
-        nav_title.setObjectName("sectionTitle")
-        nav_title.setStyleSheet("color: #ffffff;")
-        nav_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        sidebar_layout.addWidget(nav_title)
-
-        self.menu = QListWidget()
-        self.menu.addItem(QListWidgetItem("Welcome"))
-        self.menu.addItem(QListWidgetItem("History"))
-        self.menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        sidebar_layout.addWidget(self.menu)
-        self.som_back_button = QPushButton("Back to projects")
-        sidebar_layout.addWidget(self.som_back_button)
-        sidebar_layout.addStretch(1)
-
-        title_width = nav_title.sizeHint().width()
-        menu_width = max(self.menu.sizeHintForColumn(0) + 34, 92)
-        content_width = max(title_width, menu_width, 142)
-        self.menu.setFixedWidth(content_width)
-        sidebar.setFixedWidth(
-            content_width + sidebar_layout.contentsMargins().left() + sidebar_layout.contentsMargins().right())
+        sidebar, self.menu, self.som_back_button = _create_sidebar("SOM Checker")
         som_layout.addWidget(sidebar)
 
         self.som_pages = QStackedWidget()
@@ -472,55 +471,7 @@ class MainWindow(QMainWindow):
         edct_layout.setContentsMargins(0, 0, 0, 0)
         edct_layout.setSpacing(14)
 
-        self.edct_sidebar = QFrame()
-        self.edct_sidebar.setObjectName("sidebarPanel")
-        edct_sidebar_layout = QVBoxLayout(self.edct_sidebar)
-        edct_sidebar_layout.setContentsMargins(12, 14, 12, 14)
-        edct_sidebar_layout.setSpacing(10)
-
-        if APP_LOGO_PATH.exists():
-            edct_logo_frame = QFrame()
-            edct_logo_frame.setObjectName("sidebarLogoFrame")
-            edct_logo_layout = QVBoxLayout(edct_logo_frame)
-            edct_logo_layout.setContentsMargins(10, 10, 10, 10)
-            edct_logo_layout.setSpacing(0)
-
-            edct_logo = QLabel()
-            edct_logo.setObjectName("sidebarLogo")
-            edct_logo.setPixmap(
-                QPixmap(str(APP_LOGO_PATH)).scaled(
-                    126,
-                    126,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-            edct_logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            edct_logo_layout.addWidget(edct_logo)
-            edct_sidebar_layout.addWidget(edct_logo_frame)
-
-        edct_title = QLabel("eDCT Checker")
-        edct_title.setObjectName("sectionTitle")
-        edct_title.setStyleSheet("color: #ffffff;")
-        edct_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        edct_sidebar_layout.addWidget(edct_title)
-
-        self.edct_menu = QListWidget()
-        self.edct_menu.addItem(QListWidgetItem("Welcome"))
-        self.edct_menu.addItem(QListWidgetItem("History"))
-        self.edct_menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edct_sidebar_layout.addWidget(self.edct_menu)
-        self.edct_back_button = QPushButton("Back to projects")
-        edct_sidebar_layout.addWidget(self.edct_back_button)
-        edct_sidebar_layout.addStretch(1)
-
-        edct_content_width = max(edct_title.sizeHint().width(), self.edct_menu.sizeHintForColumn(0) + 34, 142)
-        self.edct_menu.setFixedWidth(edct_content_width)
-        self.edct_sidebar.setFixedWidth(
-            edct_content_width
-            + edct_sidebar_layout.contentsMargins().left()
-            + edct_sidebar_layout.contentsMargins().right()
-        )
+        self.edct_sidebar, self.edct_menu, self.edct_back_button = _create_sidebar("eDCT Checker")
         edct_layout.addWidget(self.edct_sidebar)
 
         self.edct_pages = QStackedWidget()
@@ -833,7 +784,6 @@ class WelcomePage(QWidget):
             return
 
         run_result = cast(RunResult, result)
-        self.controller.current_result = run_result
         self._fill_table_from_dataframe(self.preview_table, run_result.final_df)
         in_scope_failed = int((run_result.in_scope_df["Check"] > 0).sum())
         self.result_path_value.setText(exported_path)

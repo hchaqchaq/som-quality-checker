@@ -543,6 +543,19 @@ def _preserve_ooxml_extensions(
                         matches[0].remove(existing)
                 matches[0].extend(extensions)
 
+    def restore_table_relationship_ids(source_root, target_root) -> None:
+        relationship_id = (
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        source_parts = [
+            element for element in source_root.iter() if local_name(element) == "tablePart"
+        ]
+        target_parts = [
+            element for element in target_root.iter() if local_name(element) == "tablePart"
+        ]
+        for source_part, target_part in zip(source_parts, target_parts):
+            target_part.set(relationship_id, source_part.attrib[relationship_id])
+
     with NamedTemporaryFile(dir=target.parent, suffix=".xlsx", delete=False) as temporary:
         temporary_path = Path(temporary.name)
     try:
@@ -556,10 +569,17 @@ def _preserve_ooxml_extensions(
                 content = target_archive.read(item.filename)
                 if item.filename in replacement_parts and item.filename in source_names:
                     source_root = ElementTree.fromstring(source_archive.read(item.filename))
-                    if any(local_name(element) == "extLst" for element in source_root.iter()):
+                    has_extensions = any(
+                        local_name(element) == "extLst" for element in source_root.iter()
+                    )
+                    is_worksheet = local_name(source_root) == "worksheet"
+                    if has_extensions or is_worksheet:
                         target_root = ElementTree.fromstring(content)
-                        restore_extensions(source_root, target_root)
-                        restore_identified_extensions(source_root, target_root)
+                        if has_extensions:
+                            restore_extensions(source_root, target_root)
+                            restore_identified_extensions(source_root, target_root)
+                        if is_worksheet:
+                            restore_table_relationship_ids(source_root, target_root)
                         content = ElementTree.tostring(
                             target_root,
                             encoding="utf-8",
@@ -588,6 +608,16 @@ def _merge_annotated_parts(
         for item in source_archive.infolist():
             archive = annotated_archive if item.filename in replacement_parts else source_archive
             output_archive.writestr(item, archive.read(item.filename))
+
+
+def _validate_analysis_workbook(path: Path) -> None:
+    try:
+        with path.open("rb") as exported_file:
+            workbook = load_workbook(exported_file, read_only=False, data_only=False)
+            workbook.close()
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        raise EdctLoadError(f"Analysis workbook validation failed: {exc}") from exc
 
 
 def export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
@@ -636,9 +666,11 @@ def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
         replacement_parts = {
             worksheet.path.lstrip("/"),
             table.path.lstrip("/"),
+            "xl/styles.xml",
         }
         _preserve_ooxml_extensions(result.input_file, annotated, replacement_parts)
         _merge_annotated_parts(result.input_file, annotated, target, replacement_parts)
+        _validate_analysis_workbook(target)
     finally:
         annotated.unlink(missing_ok=True)
 

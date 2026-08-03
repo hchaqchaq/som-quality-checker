@@ -32,6 +32,4 @@ INDEX_DDL = """
 CREATE INDEX IF NOT EXISTS idx_run_columns_run_id ON run_columns(run_id);
 """
 
-
-def all_statements() -> list[str]:
-    return [RUNS_DDL, RUN_COLUMNS_DDL, INDEX_DDL]
+SCHEMA_STATEMENTS = (RUNS_DDL, RUN_COLUMNS_DDL, INDEX_DDL)

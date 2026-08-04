@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 node_modules/
+.worktrees/
 .idea/*
 !.idea/runConfigurations/
 !.idea/runConfigurations/SOM_Quality_Checker.xml

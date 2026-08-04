@@ -99,6 +99,12 @@ QLabel#sectionTitle {{
     color: {COLORS["text"]};
 }}
 
+QLabel#sidebarTitle {{
+    color: {COLORS["surface"]};
+    font-size: 17px;
+    font-weight: 600;
+}}
+
 QLabel#emptyState {{
     color: {COLORS["text_muted"]};
     background-color: {COLORS["surface_muted"]};

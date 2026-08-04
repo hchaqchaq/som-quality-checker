@@ -27,7 +27,7 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertEqual(window.pages.currentWidget(), window.edct_shell)
         self.assertEqual(
             [window.edct_menu.item(index).text() for index in range(window.edct_menu.count())],
-            ["Welcome", "History"],
+            ["Analysis", "History"],
         )
         self.assertEqual(window.edct_menu.currentRow(), 0)
 
@@ -48,6 +48,49 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertIn("eDCT", window.project_page.edct_description.text())
         self.assertEqual(window.project_page.som_recent.text(), "No analysis runs yet")
         self.assertEqual(window.project_page.edct_recent.text(), "No analysis runs yet")
+
+    def test_both_checkers_use_the_shared_workspace_shell(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+        self.assertTrue(hasattr(window, "som_destination_label"))
+        self.assertTrue(hasattr(window, "edct_destination_label"))
+
+        for open_button, shell, menu, pages, destination in (
+            (
+                window.project_page.som_button,
+                window.som_shell,
+                window.menu,
+                window.som_pages,
+                window.som_destination_label,
+            ),
+            (
+                window.project_page.edct_button,
+                window.edct_shell,
+                window.edct_menu,
+                window.edct_pages,
+                window.edct_destination_label,
+            ),
+        ):
+            open_button.click()
+            self.assertEqual(window.pages.currentWidget(), shell)
+            self.assertEqual(
+                [menu.item(index).text() for index in range(menu.count())],
+                ["Analysis", "History"],
+            )
+            self.assertEqual(destination.text(), "Analysis")
+            menu.setCurrentRow(1)
+            self.assertEqual(pages.currentIndex(), 1)
+            self.assertEqual(destination.text(), "History")
+
+    def test_switch_checker_returns_to_launch_screen(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+
+        window.project_page.som_button.click()
+        window.som_back_button.click()
+        self.assertEqual(window.pages.currentWidget(), window.project_page)
+
+        window.project_page.edct_button.click()
+        window.edct_back_button.click()
+        self.assertEqual(window.pages.currentWidget(), window.project_page)
         self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
         self.assertFalse(hasattr(window.edct_page, "plant_filter"))
         self.assertEqual(window.edct_page.pick_input_button.text(), "Choose Input File")
@@ -80,7 +123,7 @@ class ProjectNavigationTests(unittest.TestCase):
 
         visible_labels = {label.text() for label in window.edct_shell.findChildren(QLabel)}
         self.assertIn("eDCT Checker", visible_labels)
-        self.assertEqual(window.edct_back_button.text(), "Back to projects")
+        self.assertEqual(window.edct_back_button.text(), "Switch checker")
         self.assertTrue(
             all(isinstance(window.edct_pages.widget(index), QScrollArea) for index in range(2))
         )

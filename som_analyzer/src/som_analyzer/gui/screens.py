@@ -209,16 +209,16 @@ def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
         layout.addWidget(logo_frame)
 
     title_label = QLabel(title)
-    title_label.setObjectName("sectionTitle")
-    title_label.setStyleSheet("color: #ffffff;")
+    title_label.setObjectName("sidebarTitle")
     title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
     layout.addWidget(title_label)
 
     menu = QListWidget()
-    menu.addItems(("Welcome", "History"))
+    menu.addItems(("Analysis", "History"))
     menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     layout.addWidget(menu)
-    back_button = QPushButton("Back to projects")
+    back_button = QPushButton("Switch checker")
+    back_button.setObjectName("quietButton")
     layout.addWidget(back_button)
     layout.addStretch(1)
 
@@ -226,6 +226,67 @@ def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
     menu.setFixedWidth(content_width)
     sidebar.setFixedWidth(content_width + layout.contentsMargins().left() + layout.contentsMargins().right())
     return sidebar, menu, back_button
+
+
+def _wrap_page(page: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setWidget(page)
+    return scroll
+
+
+def _create_workspace_header(checker: str) -> tuple[QFrame, QLabel, QLabel]:
+    header = QFrame()
+    header.setObjectName("workspaceHeader")
+    layout = QHBoxLayout(header)
+    layout.setContentsMargins(18, 14, 18, 14)
+    layout.setSpacing(10)
+
+    title = QLabel(checker)
+    title.setObjectName("workspaceTitle")
+    destination = QLabel("Analysis")
+    destination.setObjectName("supportingText")
+    state = QLabel("Ready")
+    state.setObjectName("statusNeutral")
+
+    layout.addWidget(title)
+    layout.addWidget(destination)
+    layout.addStretch(1)
+    layout.addWidget(state)
+    return header, destination, state
+
+
+def _create_checker_shell(
+    title: str,
+    analysis_page: QWidget,
+    history_page: QWidget,
+) -> tuple[QWidget, QListWidget, QStackedWidget, QPushButton, QLabel, QLabel]:
+    shell = QWidget()
+    shell_layout = QHBoxLayout(shell)
+    shell_layout.setContentsMargins(0, 0, 0, 0)
+    shell_layout.setSpacing(14)
+
+    sidebar, menu, back_button = _create_sidebar(title)
+    shell_layout.addWidget(sidebar)
+
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    content_layout.setContentsMargins(0, 0, 0, 0)
+    content_layout.setSpacing(12)
+    header, destination, state = _create_workspace_header(title)
+    content_layout.addWidget(header)
+
+    pages = QStackedWidget()
+    pages.setObjectName("pageSurface")
+    pages.addWidget(_wrap_page(analysis_page))
+    pages.addWidget(_wrap_page(history_page))
+    content_layout.addWidget(pages)
+    shell_layout.addWidget(content)
+    shell_layout.setStretch(0, 0)
+    shell_layout.setStretch(1, 1)
+    return shell, menu, pages, back_button, destination, state
 
 
 class ProjectSelectionPage(QWidget):
@@ -497,49 +558,33 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pages)
 
         self.project_page = ProjectSelectionPage(controller)
-        self.som_shell = QWidget()
-        self.edct_shell = QWidget()
+        self.welcome_page = WelcomePage(controller)
+        self.history_page = HistoryPage(controller, "SOM")
         self.edct_history_page = HistoryPage(controller, "eDCT")
         self.edct_page = EdctPage(controller, self.edct_history_page)
+        (
+            self.som_shell,
+            self.menu,
+            self.som_pages,
+            self.som_back_button,
+            self.som_destination_label,
+            self.som_state_label,
+        ) = _create_checker_shell("SOM Checker", self.welcome_page, self.history_page)
+        (
+            self.edct_shell,
+            self.edct_menu,
+            self.edct_pages,
+            self.edct_back_button,
+            self.edct_destination_label,
+            self.edct_state_label,
+        ) = _create_checker_shell("eDCT Checker", self.edct_page, self.edct_history_page)
         self.pages.addWidget(self.project_page)
         self.pages.addWidget(self.som_shell)
         self.pages.addWidget(self.edct_shell)
 
-        som_layout = QHBoxLayout(self.som_shell)
-        som_layout.setContentsMargins(0, 0, 0, 0)
-        som_layout.setSpacing(14)
-
-        sidebar, self.menu, self.som_back_button = _create_sidebar("SOM Checker")
-        som_layout.addWidget(sidebar)
-
-        self.som_pages = QStackedWidget()
-        self.som_pages.setObjectName("pageSurface")
-        self.welcome_page = WelcomePage(controller)
-        self.history_page = HistoryPage(controller, "SOM")
-        self.som_pages.addWidget(self._wrap_page(self.welcome_page))
-        self.som_pages.addWidget(self._wrap_page(self.history_page))
-        som_layout.addWidget(self.som_pages)
-        som_layout.setStretch(0, 0)
-        som_layout.setStretch(1, 1)
-
-        edct_layout = QHBoxLayout(self.edct_shell)
-        edct_layout.setContentsMargins(0, 0, 0, 0)
-        edct_layout.setSpacing(14)
-
-        self.edct_sidebar, self.edct_menu, self.edct_back_button = _create_sidebar("eDCT Checker")
-        edct_layout.addWidget(self.edct_sidebar)
-
-        self.edct_pages = QStackedWidget()
-        self.edct_pages.setObjectName("pageSurface")
-        self.edct_pages.addWidget(self._wrap_page(self.edct_page))
-        self.edct_pages.addWidget(self._wrap_page(self.edct_history_page))
-        edct_layout.addWidget(self.edct_pages)
-        edct_layout.setStretch(0, 0)
-        edct_layout.setStretch(1, 1)
-
         self.menu.currentRowChanged.connect(self._on_menu_changed)
         self.menu.setCurrentRow(0)
-        self.project_page.som_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.som_shell))
+        self.project_page.som_button.clicked.connect(self._show_som)
         self.project_page.edct_button.clicked.connect(self._show_edct)
         self.edct_menu.currentRowChanged.connect(self._on_edct_menu_changed)
         self.edct_menu.setCurrentRow(0)
@@ -547,18 +592,16 @@ class MainWindow(QMainWindow):
         self.som_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
         self.pages.setCurrentWidget(self.project_page)
 
-    def _wrap_page(self, page: QWidget) -> QScrollArea:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(page)
-        return scroll
-
     def _on_menu_changed(self, index: int) -> None:
         self.som_pages.setCurrentIndex(index)
+        if index >= 0:
+            self.som_destination_label.setText(self.menu.item(index).text())
         if index == 1:
             self.history_page.refresh_runs()
+
+    def _show_som(self) -> None:
+        self.menu.setCurrentRow(0)
+        self.pages.setCurrentWidget(self.som_shell)
 
     def _show_edct(self) -> None:
         self.edct_menu.setCurrentRow(0)
@@ -566,6 +609,8 @@ class MainWindow(QMainWindow):
 
     def _on_edct_menu_changed(self, index: int) -> None:
         self.edct_pages.setCurrentIndex(index)
+        if index >= 0:
+            self.edct_destination_label.setText(self.edct_menu.item(index).text())
         if index == 1:
             self.edct_history_page.refresh_runs()
 

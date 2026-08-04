@@ -5,10 +5,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
+from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QScrollArea, QWidget
 
 from som_analyzer.gui.app import SomAnalyzeController
-from som_analyzer.gui.screens import MainWindow
+from som_analyzer.gui.screens import MainWindow, ResponsiveColumns
 from som_analyzer.gui import styles
 
 
@@ -29,6 +29,29 @@ class ProjectNavigationTests(unittest.TestCase):
             [window.edct_menu.item(index).text() for index in range(window.edct_menu.count())],
             ["Analysis", "History"],
         )
+        self.assertEqual(window.edct_menu.currentRow(), 0)
+        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
+        self.assertFalse(hasattr(window.edct_page, "plant_filter"))
+        self.assertEqual(window.edct_page.pick_input_button.text(), "Choose Input File")
+        self.assertEqual(window.edct_page.pick_output_button.text(), "Choose Output Folder")
+        self.assertEqual(window.edct_page.run_button.text(), "Run Analysis")
+        self.assertTrue(window.edct_page.result_path.isReadOnly())
+        self.assertEqual(window.edct_page.preview_table.columnCount(), 5)
+        self.assertTrue(window.edct_page.loading_bar.isHidden())
+        self.assertEqual(
+            window.edct_page.preview_columns,
+            ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment"),
+        )
+
+        window.edct_menu.setCurrentRow(1)
+        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_history_page)
+        window.edct_menu.setCurrentRow(0)
+        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
+
+        window.edct_back_button.click()
+        self.assertEqual(window.pages.currentWidget(), window.project_page)
+
+        window.project_page.edct_button.click()
         self.assertEqual(window.edct_menu.currentRow(), 0)
 
     def test_theme_uses_operational_palette(self) -> None:
@@ -91,30 +114,45 @@ class ProjectNavigationTests(unittest.TestCase):
         window.project_page.edct_button.click()
         window.edct_back_button.click()
         self.assertEqual(window.pages.currentWidget(), window.project_page)
-        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
-        self.assertFalse(hasattr(window.edct_page, "plant_filter"))
-        self.assertEqual(window.edct_page.pick_input_button.text(), "Choose Input File")
-        self.assertEqual(window.edct_page.pick_output_button.text(), "Choose Output Folder")
-        self.assertEqual(window.edct_page.run_button.text(), "Run Analysis")
-        self.assertEqual(window.edct_page.status.text(), "Ready")
-        self.assertTrue(window.edct_page.result_path.isReadOnly())
-        self.assertEqual(window.edct_page.preview_table.columnCount(), 5)
-        self.assertTrue(window.edct_page.loading_bar.isHidden())
-        self.assertEqual(
-            window.edct_page.preview_columns,
-            ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment"),
-        )
 
-        window.edct_menu.setCurrentRow(1)
-        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_history_page)
-        window.edct_menu.setCurrentRow(0)
-        self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
+    def test_analysis_requires_input_and_output_before_run(self) -> None:
+        window = MainWindow(SomAnalyzeController())
 
-        window.edct_back_button.click()
-        self.assertEqual(window.pages.currentWidget(), window.project_page)
+        for page in (window.welcome_page, window.edct_page):
+            self.assertFalse(page.run_button.isEnabled())
+            page.input_file.setText("C:/input.xlsx")
+            self.assertFalse(page.run_button.isEnabled())
+            page.output_dir.setText("C:/output")
+            self.assertTrue(page.run_button.isEnabled())
 
-        window.project_page.edct_button.click()
-        self.assertEqual(window.edct_menu.currentRow(), 0)
+    def test_analysis_columns_collapse_at_narrow_width(self) -> None:
+        columns = ResponsiveColumns(QWidget(), QWidget())
+        self.addCleanup(columns.close)
+        columns.show()
+        self.app.processEvents()
+
+        columns.resize(760, 500)
+        self.app.processEvents()
+        self.assertEqual(columns.layout().direction(), QBoxLayout.Direction.TopToBottom)
+
+        columns.resize(1000, 500)
+        self.app.processEvents()
+        self.assertEqual(columns.layout().direction(), QBoxLayout.Direction.LeftToRight)
+
+    def test_analysis_pages_expose_empty_and_semantic_status_states(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+
+        for page in (window.welcome_page, window.edct_page):
+            self.assertTrue(hasattr(page, "_set_status"))
+            self.assertTrue(hasattr(page, "preview_empty"))
+            self.assertEqual(page.status.objectName(), "statusNeutral")
+            self.assertIn("after an analysis run", page.preview_empty.text())
+            page._set_status("Analysis started", "progress")
+            self.assertEqual(page.status.objectName(), "statusProgress")
+            page._set_status("Analysis completed", "success")
+            self.assertEqual(page.status.objectName(), "statusSuccess")
+            page._set_status("Analysis failed", "error")
+            self.assertEqual(page.status.objectName(), "statusError")
 
     def test_edct_uses_som_page_presentation(self) -> None:
         window = MainWindow(SomAnalyzeController())

@@ -6,6 +6,7 @@ from typing import Callable, cast
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -151,6 +152,32 @@ class AnalysisWorker(QObject):
             self.finished.emit(None, "", str(exc))
 
 
+class ResponsiveColumns(QWidget):
+    def __init__(
+        self,
+        left: QWidget,
+        right: QWidget,
+        breakpoint: int = 900,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.breakpoint = breakpoint
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        layout.addWidget(left, 3)
+        layout.addWidget(right, 2)
+
+    def resizeEvent(self, event) -> None:
+        direction = (
+            QBoxLayout.Direction.TopToBottom
+            if event.size().width() < self.breakpoint
+            else QBoxLayout.Direction.LeftToRight
+        )
+        cast(QBoxLayout, self.layout()).setDirection(direction)
+        super().resizeEvent(event)
+
+
 def _run_edct(input_path: str, output_path: str) -> tuple[EdctRunResult, Path]:
     result = run_edct_analysis(input_path)
     return result, export_edct_result(result, output_path)
@@ -167,7 +194,7 @@ def _run_som(
 
 def _create_section_card(title: str, hint: str) -> QFrame:
     card = QFrame()
-    card.setObjectName("sectionCard")
+    card.setObjectName("sectionPanel")
     card_layout = QVBoxLayout(card)
     card_layout.setContentsMargins(14, 14, 14, 14)
     card_layout.setSpacing(8)
@@ -363,6 +390,7 @@ class ProjectSelectionPage(QWidget):
 
 
 class EdctPage(QWidget):
+    status_changed = pyqtSignal(str)
     preview_columns = ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment")
 
     def __init__(self, controller: SomAnalyzeController, history_page: HistoryPage) -> None:
@@ -371,22 +399,10 @@ class EdctPage(QWidget):
         self.history_page = history_page
         self._run_thread: QThread | None = None
         self._run_worker: AnalysisWorker | None = None
+        self._busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
-
-        hero_panel = QFrame()
-        hero_panel.setObjectName("heroPanel")
-        hero_layout = QVBoxLayout(hero_panel)
-        hero_layout.setContentsMargins(16, 16, 16, 16)
-        hero_layout.setSpacing(4)
-        title = QLabel("eDCT Quality Review")
-        title.setObjectName("pageTitle")
-        subtitle = QLabel("Run workbook validation, review flagged rows, and export clean results.")
-        subtitle.setObjectName("pageSubtitle")
-        hero_layout.addWidget(title)
-        hero_layout.addWidget(subtitle)
-        layout.addWidget(hero_panel)
 
         input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
         input_card_layout = cast(QVBoxLayout, input_card.layout())
@@ -412,25 +428,34 @@ class EdctPage(QWidget):
         output_row.addWidget(self.output_dir)
         output_row.addWidget(self.pick_output_button)
         input_card_layout.addLayout(output_row)
-        layout.addWidget(input_card)
-
         analysis_card = _create_section_card("Analysis", "Assess the workbook and export an annotated copy.")
         analysis_layout = cast(QVBoxLayout, analysis_card.layout())
         self.run_button = QPushButton("Run Analysis")
-        self.run_button.setObjectName("accentButton")
+        self.run_button.setObjectName("primaryButton")
         analysis_layout.addWidget(self.run_button)
         self.loading_bar = QProgressBar()
         self.loading_bar.setRange(0, 0)
         self.loading_bar.hide()
         analysis_layout.addWidget(self.loading_bar)
-        self.status = QLabel("Ready")
-        self.status.setObjectName("statusInfo")
+        self.status = QLabel("Choose an input workbook and output folder to begin.")
+        self.status.setObjectName("statusNeutral")
         analysis_layout.addWidget(self.status)
-        layout.addWidget(analysis_card)
+
+        analysis_layout.addWidget(QLabel("Exported workbook:"))
+        self.result_path = QLineEdit()
+        self.result_path.setReadOnly(True)
+        self.result_path.setPlaceholderText("The exported workbook path will appear here")
+        analysis_layout.addWidget(self.result_path)
+
+        self.workspace_columns = ResponsiveColumns(input_card, analysis_card)
+        layout.addWidget(self.workspace_columns)
 
         preview_card = _create_section_card("Preview", "First rows from the latest analysis workbook.")
         preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_layout = cast(QVBoxLayout, preview_card.layout())
+        self.preview_empty = QLabel("Preview rows will appear here after an analysis run.")
+        self.preview_empty.setObjectName("emptyState")
+        preview_layout.addWidget(self.preview_empty)
         self.preview_table = QTableWidget()
         self.preview_table.setColumnCount(len(self.preview_columns))
         self.preview_table.setHorizontalHeaderLabels(self.preview_columns)
@@ -441,20 +466,38 @@ class EdctPage(QWidget):
         self.preview_table.setMinimumHeight(200)
         preview_layout.addWidget(self.preview_table)
         layout.addWidget(preview_card)
-
-        result_card = _create_section_card("Export", "Latest exported workbook path.")
-        result_layout = cast(QVBoxLayout, result_card.layout())
-        result_layout.addWidget(QLabel("Result stored at:"))
-        self.result_path = QLineEdit()
-        self.result_path.setReadOnly(True)
-        self.result_path.setPlaceholderText("The exported workbook path will appear here")
-        result_layout.addWidget(self.result_path)
-        layout.addWidget(result_card)
-        layout.setStretch(3, 1)
+        layout.setStretch(1, 1)
 
         self.pick_input_button.clicked.connect(self._pick_input)
         self.pick_output_button.clicked.connect(self._pick_output)
         self.run_button.clicked.connect(self._run)
+        self.input_file.textChanged.connect(self._update_run_enabled)
+        self.output_dir.textChanged.connect(self._update_run_enabled)
+        self._update_run_enabled()
+
+    def _update_run_enabled(self) -> None:
+        ready = bool(self.input_file.text().strip() and self.output_dir.text().strip())
+        self.run_button.setEnabled(ready and not self._busy)
+
+    def _set_status(self, text: str, level: str = "neutral") -> None:
+        object_names = {
+            "neutral": "statusNeutral",
+            "progress": "statusProgress",
+            "success": "statusSuccess",
+            "error": "statusError",
+        }
+        self.status.setText(text)
+        self.status.setObjectName(object_names[level])
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
+        self.status_changed.emit(text)
+
+    def _set_busy_state(self, busy: bool) -> None:
+        self._busy = busy
+        self.pick_input_button.setEnabled(not busy)
+        self.pick_output_button.setEnabled(not busy)
+        self.loading_bar.setVisible(busy)
+        self._update_run_enabled()
 
     def _pick_input(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -481,11 +524,10 @@ class EdctPage(QWidget):
         input_path = self.input_file.text().strip()
         output_path = self.output_dir.text().strip()
         if not input_path or not output_path:
-            self.status.setText("Choose an input workbook and output folder.")
+            self._set_status("Choose an input workbook and output folder.", "error")
             return
-        self.run_button.setEnabled(False)
-        self.loading_bar.show()
-        self.status.setText("Analysis started...")
+        self._set_busy_state(True)
+        self._set_status("Analysis in progress", "progress")
         self._run_thread = QThread(self)
         self._run_worker = AnalysisWorker(lambda: _run_edct(input_path, output_path))
         self._run_worker.moveToThread(self._run_thread)
@@ -498,18 +540,19 @@ class EdctPage(QWidget):
         self._run_thread.start()
 
     def _finished(self, result: object, exported_path: str, error: str) -> None:
-        self.run_button.setEnabled(True)
-        self.loading_bar.hide()
+        self._set_busy_state(False)
         if error or result is None:
-            self.status.setText(f"Run failed: {error or 'unknown error'}")
+            self._set_status(f"Analysis failed: {error or 'unknown error'}", "error")
             return
         run_result = cast(EdctRunResult, result)
         self.result_path.setText(exported_path)
-        self.status.setText(
+        self._set_status(
             f"Run {run_result.run_id} finished | rows: {len(run_result.assessed_rows)} | "
-            f"failed: {run_result.rows_failed}"
+            f"failed: {run_result.rows_failed}",
+            "success",
         )
         self._fill_preview(run_result)
+        self.preview_empty.hide()
         self.history_page.refresh_runs()
 
     def _fill_preview(self, result: EdctRunResult) -> None:
@@ -578,6 +621,8 @@ class MainWindow(QMainWindow):
             self.edct_destination_label,
             self.edct_state_label,
         ) = _create_checker_shell("eDCT Checker", self.edct_page, self.edct_history_page)
+        self.welcome_page.status_changed.connect(self.som_state_label.setText)
+        self.edct_page.status_changed.connect(self.edct_state_label.setText)
         self.pages.addWidget(self.project_page)
         self.pages.addWidget(self.som_shell)
         self.pages.addWidget(self.edct_shell)
@@ -616,30 +661,19 @@ class MainWindow(QMainWindow):
 
 
 class WelcomePage(QWidget):
+    status_changed = pyqtSignal(str)
+
     def __init__(self, controller: SomAnalyzeController) -> None:
         super().__init__()
         self.controller = controller
         self._run_thread: QThread | None = None
         self._run_worker: AnalysisWorker | None = None
-        self.status_level = "info"
+        self._busy = False
         self.filter_columns = ("Plant", "Contacted", "Info completed")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
-
-        hero_panel = QFrame()
-        hero_panel.setObjectName("heroPanel")
-        hero_layout = QVBoxLayout(hero_panel)
-        hero_layout.setContentsMargins(16, 16, 16, 16)
-        hero_layout.setSpacing(4)
-        hero_title = QLabel("SOM Quality Review")
-        hero_title.setObjectName("pageTitle")
-        hero_subtitle = QLabel("Run workbook validation, review flagged rows, and export clean results.")
-        hero_subtitle.setObjectName("pageSubtitle")
-        hero_layout.addWidget(hero_title)
-        hero_layout.addWidget(hero_subtitle)
-        layout.addWidget(hero_panel)
 
         input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
         input_card_layout = cast(QVBoxLayout, input_card.layout())
@@ -665,8 +699,6 @@ class WelcomePage(QWidget):
         output_row.addWidget(self.output_dir)
         output_row.addWidget(self.pick_output_button)
         input_card_layout.addLayout(output_row)
-
-        layout.addWidget(input_card)
 
         filters_card = _create_section_card(
             "Filters",
@@ -698,27 +730,49 @@ class WelcomePage(QWidget):
             filters_grid.addWidget(combo, 1, column_index)
 
         filters_layout.addLayout(filters_grid)
-        self.run_button = QPushButton("Run Analysis")
-        filters_layout.addWidget(self.run_button)
-        layout.addWidget(filters_card)
 
-        self.loading_label = QLabel("Analyzing... please wait")
+        setup = QWidget()
+        setup_layout = QVBoxLayout(setup)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(12)
+        setup_layout.addWidget(input_card)
+        setup_layout.addWidget(filters_card)
+
+        run_card = _create_section_card("Analysis", "Assess the selected rows and export an analysis workbook.")
+        run_layout = cast(QVBoxLayout, run_card.layout())
+        self.run_button = QPushButton("Run Analysis")
+        self.run_button.setObjectName("primaryButton")
+        run_layout.addWidget(self.run_button)
+
+        self.loading_label = QLabel("Analysis in progress")
         self.loading_label.setObjectName("sectionHint")
         self.loading_label.hide()
-        layout.addWidget(self.loading_label)
+        run_layout.addWidget(self.loading_label)
 
         self.loading_bar = QProgressBar()
         self.loading_bar.setRange(0, 0)
         self.loading_bar.hide()
-        layout.addWidget(self.loading_bar)
+        run_layout.addWidget(self.loading_bar)
 
-        self.status = QLabel("Ready")
-        self.status.setObjectName("statusInfo")
-        layout.addWidget(self.status)
+        self.status = QLabel("Choose an input workbook and output folder to begin.")
+        self.status.setObjectName("statusNeutral")
+        run_layout.addWidget(self.status)
+
+        run_layout.addWidget(QLabel("Exported workbook:"))
+        self.result_path_value = QLineEdit("")
+        self.result_path_value.setReadOnly(True)
+        self.result_path_value.setPlaceholderText("The exported workbook path will appear here after a run")
+        run_layout.addWidget(self.result_path_value)
+
+        self.workspace_columns = ResponsiveColumns(setup, run_card)
+        layout.addWidget(self.workspace_columns)
 
         preview_card = _create_section_card("Preview", "First five rows from the latest output workbook.")
         preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_card_layout = cast(QVBoxLayout, preview_card.layout())
+        self.preview_empty = QLabel("Preview rows will appear here after an analysis run.")
+        self.preview_empty.setObjectName("emptyState")
+        preview_card_layout.addWidget(self.preview_empty)
         self.preview_table = QTableWidget()
         self.preview_table.setAlternatingRowColors(True)
         self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -727,26 +781,14 @@ class WelcomePage(QWidget):
         self.preview_table.setMinimumHeight(200)
         preview_card_layout.addWidget(self.preview_table)
         layout.addWidget(preview_card)
-
-        result_card = _create_section_card("Export", "Latest exported workbook path.")
-        result_card_layout = cast(QVBoxLayout, result_card.layout())
-        result_card_layout.addWidget(QLabel("Result stored at:"))
-        self.result_path_value = QLineEdit("")
-        self.result_path_value.setReadOnly(True)
-        self.result_path_value.setPlaceholderText("The exported workbook path will appear here after a run")
-        result_card_layout.addWidget(self.result_path_value)
-        layout.addWidget(result_card)
-        layout.setStretch(0, 0)
-        layout.setStretch(1, 0)
-        layout.setStretch(2, 0)
-        layout.setStretch(3, 0)
-        layout.setStretch(4, 0)
-        layout.setStretch(5, 1)
-        layout.setStretch(6, 0)
+        layout.setStretch(1, 1)
 
         self.pick_input_button.clicked.connect(self._pick_input_file)
         self.pick_output_button.clicked.connect(self._pick_output_directory)
         self.run_button.clicked.connect(self._on_run)
+        self.input_file.textChanged.connect(self._update_run_enabled)
+        self.output_dir.textChanged.connect(self._update_run_enabled)
+        self._update_run_enabled()
 
     def _create_filter_combo(self, placeholder: str) -> CheckableComboBox:
         combo = CheckableComboBox(placeholder)
@@ -754,13 +796,25 @@ class WelcomePage(QWidget):
         combo.reset(placeholder)
         return combo
 
-    def _set_status(self, text: str, level: str = "info") -> None:
-        self.status_level = level
+    def _update_run_enabled(self) -> None:
+        ready = bool(self.input_file.text().strip() and self.output_dir.text().strip())
+        self.run_button.setEnabled(ready and not self._busy)
+
+    def _set_status(self, text: str, level: str = "neutral") -> None:
+        object_names = {
+            "neutral": "statusNeutral",
+            "info": "statusNeutral",
+            "progress": "statusProgress",
+            "success": "statusSuccess",
+            "warning": "statusError",
+            "error": "statusError",
+        }
         self.status.setText(text)
-        self.status.setObjectName("statusWarning" if level == "warning" else "statusInfo")
+        self.status.setObjectName(object_names[level])
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
         self.status.update()
+        self.status_changed.emit(text)
 
     def _pick_input_file(self) -> None:
         selected_file, _ = QFileDialog.getOpenFileName(
@@ -853,7 +907,7 @@ class WelcomePage(QWidget):
             return
 
         self.result_path_value.clear()
-        self._set_status("Analysis started...")
+        self._set_status("Analysis in progress", "progress")
         self._set_busy_state(True)
 
         # Run heavy Excel + pandas work off the UI thread to avoid freezing.
@@ -876,30 +930,33 @@ class WelcomePage(QWidget):
         self._set_busy_state(False)
 
         if error:
-            self._set_status(f"Run failed: {error}", level="warning")
+            self._set_status(f"Analysis failed: {error}", level="error")
             return
 
         if result is None:
-            self._set_status("Run failed: unknown error", level="warning")
+            self._set_status("Analysis failed: unknown error", level="error")
             return
 
         run_result = cast(RunResult, result)
         self._fill_table_from_dataframe(self.preview_table, run_result.final_df)
+        self.preview_empty.hide()
         in_scope_failed = int((run_result.in_scope_df["Check"] > 0).sum())
         self.result_path_value.setText(exported_path)
         self._set_status(
             f"Run {run_result.run_id} finished in {run_result.duration_s:.2f}s | "
-            f"rows: {len(run_result.final_df)} | failed in scope: {in_scope_failed}"
+            f"rows: {len(run_result.final_df)} | failed in scope: {in_scope_failed}",
+            "success",
         )
 
     def _set_busy_state(self, busy: bool) -> None:
-        self.run_button.setEnabled(not busy)
+        self._busy = busy
         self.pick_input_button.setEnabled(not busy)
         self.pick_output_button.setEnabled(not busy)
         for combo in self.filter_combos.values():
             combo.setEnabled(not busy and combo.has_loaded_values())
         self.loading_label.setVisible(busy)
         self.loading_bar.setVisible(busy)
+        self._update_run_enabled()
 
     def _clear_worker_references(self) -> None:
         self._run_worker = None

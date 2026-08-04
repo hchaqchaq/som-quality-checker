@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
 
 from som_analyzer.gui.app import SomAnalyzeController
 from som_analyzer.gui.screens import MainWindow
+from som_analyzer.gui import styles
 
 
 class ProjectNavigationTests(unittest.TestCase):
@@ -19,8 +20,8 @@ class ProjectNavigationTests(unittest.TestCase):
     def test_user_can_select_projects_and_return(self) -> None:
         window = MainWindow(SomAnalyzeController())
         self.assertEqual(window.pages.currentWidget(), window.project_page)
-        self.assertEqual(window.project_page.som_button.text(), "SOM Quality Checker")
-        self.assertEqual(window.project_page.edct_button.text(), "eDCT Quality Checker")
+        self.assertEqual(window.project_page.som_button.text(), "Open SOM checker")
+        self.assertEqual(window.project_page.edct_button.text(), "Open eDCT checker")
 
         window.project_page.edct_button.click()
         self.assertEqual(window.pages.currentWidget(), window.edct_shell)
@@ -29,6 +30,24 @@ class ProjectNavigationTests(unittest.TestCase):
             ["Welcome", "History"],
         )
         self.assertEqual(window.edct_menu.currentRow(), 0)
+
+    def test_theme_uses_operational_palette(self) -> None:
+        self.assertEqual(getattr(styles, "COLORS", {}).get("accent"), "#0f766e")
+        self.assertIn("'Segoe UI'", styles.APP_STYLESHEET)
+        self.assertIn("QPushButton:focus", styles.APP_STYLESHEET)
+        self.assertIn("QTableWidget::item:selected", styles.APP_STYLESHEET)
+        self.assertNotIn("#f0c23b", styles.APP_STYLESHEET.lower())
+
+    def test_project_selection_explains_both_checkers(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+
+        self.assertEqual(window.project_page.objectName(), "projectLaunch")
+        self.assertEqual(window.project_page.som_button.objectName(), "projectChoice")
+        self.assertEqual(window.project_page.edct_button.objectName(), "projectChoice")
+        self.assertIn("SOM", window.project_page.som_description.text())
+        self.assertIn("eDCT", window.project_page.edct_description.text())
+        self.assertEqual(window.project_page.som_recent.text(), "No analysis runs yet")
+        self.assertEqual(window.project_page.edct_recent.text(), "No analysis runs yet")
         self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
         self.assertFalse(hasattr(window.edct_page, "plant_filter"))
         self.assertEqual(window.edct_page.pick_input_button.text(), "Choose Input File")

@@ -27,7 +27,7 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 9. As an eDCT user, I want `Check` to count every validation failure, so that each row has a useful correction total.
 10. As an eDCT user, I want `Comment` to name exact fields and reasons, so that corrections are actionable.
 11. As an eDCT user, I want passed rows marked with `Check = 0` and `Quality check passed`, so that successful assessment is explicit.
-12. As an eDCT user, I want email cells to contain one valid address or addresses separated only by `;`, so that contact data has one reliable format.
+12. As an eDCT user, I want email cells to contain plain valid addresses separated by `;`, with trailing semicolons ignored, so that contact data has one reliable format.
 13. As an eDCT user, I want malformed emails, alternate separators, display names, and surrounding text rejected, so that inconsistent contact data is visible.
 14. As an eDCT user, I want populated COFOR fields to use the six-character, two-space, two-character pattern, so that identifiers are valid.
 15. As an eDCT user, I want optional phone fields to reject implausible populated values, so that arbitrary text does not pass.
@@ -72,7 +72,7 @@ The eDCT checker preserves every worksheet, formula, style, source value, and ro
 - Reference columns by name, never by Excel letters.
 - Resolve legacy `AY`, `BP`, and `AC` references respectively as `Effective kick-off date`, `Cofor created date`, and `Overseas`.
 - Normalize for validation only; preserve original values.
-- Count one failure per failed field or condition and group compatible comment reasons with ` | `.
+- Count one failure per failed field or condition and group compatible comment reasons with `|`.
 - Keep dates optional unless another condition requires data.
 - Learn each formula structure from the formula reference row and translate row-relative references for comparison.
 - If the formula reference row is missing a formula, add one named failure to every assessed row and continue.

@@ -93,6 +93,7 @@ def _is_valid_email(value: object) -> bool:
     text = _normalized_text(value)
     if not text:
         return True
+    text = re.sub(r"(?:;\s*)+$", "", text)
     parts = [part.strip() for part in text.split(";")]
     return bool(parts) and all(part and EMAIL_REGEX.fullmatch(part) for part in parts)
 

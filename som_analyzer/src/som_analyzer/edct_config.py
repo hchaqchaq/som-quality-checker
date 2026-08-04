@@ -59,8 +59,8 @@ EDCT_EDI_MODE_VALUES = ("WEB EDI", "Standard EDI")
 EDCT_PHONE_DIGITS = (7, 20)
 
 EDCT_RULE_CATALOGUE_ROWS = (
-    "| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | One plain email or plain emails separated only by `;` |",
-    "| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | One plain email or plain emails separated only by `;` |",
+    "| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
+    "| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
     "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
     "| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |",
     "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |",

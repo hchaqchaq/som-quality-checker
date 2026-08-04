@@ -2,14 +2,42 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QScrollArea, QWidget
+from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
 
 from som_analyzer.gui.app import SomAnalyzeController
 from som_analyzer.gui.screens import MainWindow, ResponsiveColumns
 from som_analyzer.gui import styles
+
+
+class HistoryController(SomAnalyzeController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deleted: list[int] = []
+
+    def history_runs(self, project: str = "SOM"):
+        return [
+            {
+                "id": 17,
+                "started_at": "2026-08-04 10:00:00",
+                "duration_s": 1.25,
+                "rows_total": 40,
+                "rows_in_scope": 32,
+                "rows_failed": 6,
+                "status": "completed",
+                "input_file": "input.xlsx",
+                "exported_file": "output.xlsx",
+            }
+        ]
+
+    def history_columns(self, run_id: int):
+        return [{"rule_name": "email", "column_name": "Owner email", "fail_count": 3}]
+
+    def delete_history_run(self, run_id: int) -> None:
+        self.deleted.append(run_id)
 
 
 class ProjectNavigationTests(unittest.TestCase):
@@ -153,6 +181,45 @@ class ProjectNavigationTests(unittest.TestCase):
             self.assertEqual(page.status.objectName(), "statusSuccess")
             page._set_status("Analysis failed", "error")
             self.assertEqual(page.status.objectName(), "statusError")
+
+    def test_history_selection_loads_rule_totals(self) -> None:
+        controller = HistoryController()
+        window = MainWindow(controller)
+        history = window.history_page
+
+        self.assertFalse(hasattr(history, "run_id_input"))
+        self.assertFalse(history.delete_button.isEnabled())
+        self.assertIn("Select an analysis run", history.columns_status.text())
+
+        history.runs_table.selectRow(0)
+        self.app.processEvents()
+
+        self.assertEqual(history._selected_run_id(), 17)
+        self.assertTrue(history.delete_button.isEnabled())
+        self.assertEqual(history.columns_table.rowCount(), 1)
+        self.assertEqual(history.columns_table.item(0, 2).text(), "3")
+
+    def test_history_delete_requires_confirmation(self) -> None:
+        controller = HistoryController()
+        window = MainWindow(controller)
+        history = window.history_page
+        history.runs_table.selectRow(0)
+
+        with patch.object(
+            QMessageBox,
+            "question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            history.delete_button.click()
+        self.assertEqual(controller.deleted, [])
+
+        with patch.object(
+            QMessageBox,
+            "question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            history.delete_button.click()
+        self.assertEqual(controller.deleted, [17])
 
     def test_edct_uses_som_page_presentation(self) -> None:
         window = MainWindow(SomAnalyzeController())

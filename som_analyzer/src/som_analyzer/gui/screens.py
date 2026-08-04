@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -973,102 +974,56 @@ class HistoryPage(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        hero_panel = QFrame()
-        hero_panel.setObjectName("heroPanel")
-        hero_layout = QVBoxLayout(hero_panel)
-        hero_layout.setContentsMargins(16, 16, 16, 16)
-        hero_layout.setSpacing(4)
-        hero_title = QLabel("Run History")
-        hero_title.setObjectName("pageTitle")
-        hero_subtitle = QLabel("Review previous analyses, inspect rule totals, and remove obsolete runs.")
-        hero_subtitle.setObjectName("pageSubtitle")
-        hero_layout.addWidget(hero_title)
-        hero_layout.addWidget(hero_subtitle)
-        layout.addWidget(hero_panel)
+        heading = QLabel("Analysis history")
+        heading.setObjectName("pageTitle")
+        description = QLabel("Select an analysis run to inspect its validation failure totals.")
+        description.setObjectName("supportingText")
+        layout.addWidget(heading)
+        layout.addWidget(description)
 
-        controls_card = QFrame()
-        controls_card.setObjectName("sectionCard")
-        controls_card_layout = QVBoxLayout(controls_card)
-        controls_card_layout.setContentsMargins(14, 14, 14, 14)
-        controls_card_layout.setSpacing(10)
-
-        controls_title = QLabel("History Controls")
-        controls_title.setObjectName("sectionTitle")
-        controls_hint = QLabel("Refresh the history, delete a run, or load column totals for a specific run id.")
-        controls_hint.setObjectName("sectionHint")
-        controls_card_layout.addWidget(controls_title)
-        controls_card_layout.addWidget(controls_hint)
-
-        top_buttons = QHBoxLayout()
+        runs_panel = _create_section_card("Stored runs", "Select one row to inspect its recorded totals.")
+        runs_layout = cast(QVBoxLayout, runs_panel.layout())
         self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.setObjectName("accentButton")
-        top_buttons.addWidget(self.refresh_button)
-        top_buttons.addStretch(1)
-        controls_card_layout.addLayout(top_buttons)
-
-        controls_card_layout.addWidget(QLabel("Run id:"))
-        controls = QGridLayout()
-        self.run_id_input = QLineEdit("")
-        self.run_id_input.setPlaceholderText("run id")
-        self.delete_button = QPushButton("Delete")
-        self.delete_button.setObjectName("dangerButton")
-        self.columns_button = QPushButton("Load Columns")
-
-        controls.addWidget(self.run_id_input, 0, 0)
-        controls.addWidget(self.delete_button, 0, 1)
-        controls.addWidget(self.columns_button, 0, 2)
-        controls_card_layout.addLayout(controls)
-
-        self.history_status = QLabel("History")
-        self.history_status.setObjectName("statusInfo")
-        controls_card_layout.addWidget(self.history_status)
-        layout.addWidget(controls_card)
-
-        runs_card = QFrame()
-        runs_card.setObjectName("sectionCard")
-        runs_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        runs_card_layout = QVBoxLayout(runs_card)
-        runs_card_layout.setContentsMargins(14, 14, 14, 14)
-        runs_card_layout.setSpacing(8)
-        runs_title = QLabel("Stored Runs")
-        runs_title.setObjectName("sectionTitle")
-        runs_card_layout.addWidget(runs_title)
+        runs_layout.addWidget(self.refresh_button)
         self.runs_table = QTableWidget()
         self.runs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.runs_table.setAlternatingRowColors(True)
-        self.runs_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.runs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.runs_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.runs_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.runs_table.setMinimumHeight(190)
-        runs_card_layout.addWidget(self.runs_table)
-        layout.addWidget(runs_card)
+        self.runs_table.setMinimumHeight(260)
+        runs_layout.addWidget(self.runs_table)
 
-        columns_card = QFrame()
-        columns_card.setObjectName("sectionCard")
-        columns_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        columns_card_layout = QVBoxLayout(columns_card)
-        columns_card_layout.setContentsMargins(14, 14, 14, 14)
-        columns_card_layout.setSpacing(8)
-        self.columns_status = QLabel("Rule and column fail totals")
-        self.columns_status.setObjectName("sectionTitle")
-        columns_card_layout.addWidget(self.columns_status)
-
+        details_panel = _create_section_card(
+            "Validation failure totals",
+            "Rule and column totals for the selected analysis run.",
+        )
+        details_layout = cast(QVBoxLayout, details_panel.layout())
+        self.columns_status = QLabel("Select an analysis run to inspect validation failure totals.")
+        self.columns_status.setObjectName("emptyState")
+        self.columns_status.setWordWrap(True)
+        details_layout.addWidget(self.columns_status)
         self.columns_table = QTableWidget()
         self.columns_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.columns_table.setAlternatingRowColors(True)
         self.columns_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.columns_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.columns_table.setMinimumHeight(170)
-        columns_card_layout.addWidget(self.columns_table)
-        layout.addWidget(columns_card)
-        layout.setStretch(0, 0)
-        layout.setStretch(1, 0)
-        layout.setStretch(2, 2)
-        layout.setStretch(3, 2)
+        self.columns_table.setMinimumHeight(220)
+        details_layout.addWidget(self.columns_table)
+        self.delete_button = QPushButton("Delete analysis run")
+        self.delete_button.setObjectName("dangerButton")
+        self.delete_button.setEnabled(False)
+        details_layout.addWidget(self.delete_button)
+
+        self.workspace_columns = ResponsiveColumns(runs_panel, details_panel)
+        layout.addWidget(self.workspace_columns, 1)
+        self.history_status = QLabel("History ready")
+        self.history_status.setObjectName("statusNeutral")
+        layout.addWidget(self.history_status)
 
         self.refresh_button.clicked.connect(self.refresh_runs)
         self.delete_button.clicked.connect(self._delete_run)
-        self.columns_button.clicked.connect(self._load_columns)
-
+        self.runs_table.itemSelectionChanged.connect(self._load_selected_run)
         self.refresh_runs()
 
     def _set_cell(self, table: QTableWidget, row: int, column: int, value: object) -> None:
@@ -1089,14 +1044,14 @@ class HistoryPage(QWidget):
             "input_file",
             "exported_file",
         ]
-
         self.runs_table.clear()
         self.runs_table.setColumnCount(len(headers))
         self.runs_table.setHorizontalHeaderLabels(headers)
         self.runs_table.setRowCount(len(rows))
-
         for row_index, run in enumerate(rows):
-            self._set_cell(self.runs_table, row_index, 0, run["id"])
+            id_item = QTableWidgetItem(str(run["id"]))
+            id_item.setData(Qt.ItemDataRole.UserRole, int(run["id"]))
+            self.runs_table.setItem(row_index, 0, id_item)
             self._set_cell(self.runs_table, row_index, 1, run["started_at"])
             self._set_cell(self.runs_table, row_index, 2, f"{float(run['duration_s']):.2f}")
             self._set_cell(self.runs_table, row_index, 3, run["rows_total"])
@@ -1105,41 +1060,65 @@ class HistoryPage(QWidget):
             self._set_cell(self.runs_table, row_index, 6, run["status"])
             self._set_cell(self.runs_table, row_index, 7, run["input_file"])
             self._set_cell(self.runs_table, row_index, 8, run["exported_file"] or "")
-
         self.runs_table.resizeColumnsToContents()
+        self.runs_table.clearSelection()
+        self.runs_table.setCurrentCell(-1, -1)
+        self.delete_button.setEnabled(False)
+        self.columns_table.setRowCount(0)
+        self.columns_status.setText(
+            "Select an analysis run to inspect validation failure totals."
+            if rows
+            else "No analysis runs yet. Completed runs will appear here."
+        )
         self.history_status.setText("History refreshed")
 
     def _selected_run_id(self) -> int | None:
-        raw_value = self.run_id_input.text().strip()
-        if not raw_value.isdigit():
-            self.history_status.setText("Enter a numeric run id")
+        row = self.runs_table.currentRow()
+        if row < 0:
             return None
-        return int(raw_value)
+        item = self.runs_table.item(row, 0)
+        return int(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
 
-    def _delete_run(self) -> None:
-        run_id = self._selected_run_id()
-        if run_id is None:
-            return
-        self.controller.delete_history_run(run_id)
-        self.refresh_runs()
-        self.history_status.setText(f"Deleted run {run_id}")
-
-    def _load_columns(self) -> None:
-        run_id = self._selected_run_id()
-        if run_id is None:
-            return
-
-        rows = self.controller.history_columns(run_id)
+    def _fill_columns(self, rows) -> None:
         headers = ["rule_name", "column_name", "fail_count"]
         self.columns_table.clear()
         self.columns_table.setColumnCount(len(headers))
         self.columns_table.setHorizontalHeaderLabels(headers)
         self.columns_table.setRowCount(len(rows))
-
         for row_index, row in enumerate(rows):
             self._set_cell(self.columns_table, row_index, 0, row["rule_name"])
             self._set_cell(self.columns_table, row_index, 1, row["column_name"])
             self._set_cell(self.columns_table, row_index, 2, row["fail_count"])
-
         self.columns_table.resizeColumnsToContents()
-        self.columns_status.setText(f"Loaded columns for run {run_id}")
+
+    def _load_selected_run(self) -> None:
+        run_id = self._selected_run_id()
+        self.delete_button.setEnabled(run_id is not None)
+        if run_id is None:
+            self.columns_table.setRowCount(0)
+            self.columns_status.setText("Select an analysis run to inspect validation failure totals.")
+            return
+        rows = self.controller.history_columns(run_id)
+        self._fill_columns(rows)
+        self.columns_status.setText(
+            f"Validation failure totals for run {run_id}"
+            if rows
+            else f"Run {run_id} has no recorded validation failures."
+        )
+
+    def _delete_run(self) -> None:
+        run_id = self._selected_run_id()
+        if run_id is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete analysis run",
+            f"Delete analysis run {run_id} from history?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.controller.delete_history_run(run_id)
+        self.refresh_runs()
+        self.history_status.setText(f"Deleted analysis run {run_id}")

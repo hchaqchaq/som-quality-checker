@@ -49,15 +49,9 @@ QScrollArea > QWidget > QWidget {{
     border: 0;
 }}
 
-QWidget#sidebarPanel,
-QWidget#heroPanel {{
+QWidget#sidebarPanel {{
     background-color: {COLORS["navigation"]};
     border-radius: 14px;
-}}
-
-QWidget#heroPanel QLabel {{
-    background: transparent;
-    color: {COLORS["surface"]};
 }}
 
 QWidget#sidebarLogoFrame {{
@@ -79,18 +73,10 @@ QLabel#pageTitle {{
     color: {COLORS["text"]};
 }}
 
-QWidget#heroPanel QLabel#pageTitle {{
-    color: {COLORS["surface"]};
-}}
-
 QLabel#pageSubtitle,
 QLabel#supportingText,
 QLabel#sectionHint {{
     color: {COLORS["text_muted"]};
-}}
-
-QWidget#heroPanel QLabel#pageSubtitle {{
-    color: {COLORS["surface_muted"]};
 }}
 
 QLabel#sectionTitle {{

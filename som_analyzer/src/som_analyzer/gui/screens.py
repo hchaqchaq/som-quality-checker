@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, cast
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QBoxLayout,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QLineEdit,
+    QLayout,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -164,10 +165,16 @@ class ResponsiveColumns(QWidget):
         super().__init__(parent)
         self.breakpoint = breakpoint
         layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
+        left.setMinimumWidth(0)
+        right.setMinimumWidth(0)
         layout.addWidget(left, 3)
         layout.addWidget(right, 2)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
 
     def resizeEvent(self, event) -> None:
         direction = (
@@ -204,6 +211,7 @@ def _create_section_card(title: str, hint: str) -> QFrame:
     title_label.setObjectName("sectionTitle")
     hint_label = QLabel(hint)
     hint_label.setObjectName("sectionHint")
+    hint_label.setWordWrap(True)
     card_layout.addWidget(title_label)
     card_layout.addWidget(hint_label)
     return card
@@ -411,6 +419,7 @@ class EdctPage(QWidget):
         input_card_layout.addWidget(QLabel("Input workbook:"))
         input_row = QHBoxLayout()
         self.input_file = QLineEdit()
+        self.input_file.setMinimumWidth(0)
         self.input_file.setReadOnly(True)
         self.input_file.setPlaceholderText("Choose an eDCT input workbook")
         self.pick_input_button = QPushButton("Choose Input File")
@@ -422,6 +431,7 @@ class EdctPage(QWidget):
         input_card_layout.addWidget(QLabel("Output folder:"))
         output_row = QHBoxLayout()
         self.output_dir = QLineEdit()
+        self.output_dir.setMinimumWidth(0)
         self.output_dir.setReadOnly(True)
         self.output_dir.setPlaceholderText("Choose an output folder")
         self.pick_output_button = QPushButton("Choose Output Folder")
@@ -682,6 +692,7 @@ class WelcomePage(QWidget):
         input_card_layout.addWidget(QLabel("Input workbook:"))
         input_row = QHBoxLayout()
         self.input_file = QLineEdit("")
+        self.input_file.setMinimumWidth(0)
         self.input_file.setReadOnly(True)
         self.input_file.setPlaceholderText("Choose an input workbook")
         self.pick_input_button = QPushButton("Choose Input File")
@@ -693,6 +704,7 @@ class WelcomePage(QWidget):
         input_card_layout.addWidget(QLabel("Output folder:"))
         output_row = QHBoxLayout()
         self.output_dir = QLineEdit("")
+        self.output_dir.setMinimumWidth(0)
         self.output_dir.setReadOnly(True)
         self.output_dir.setPlaceholderText("Choose an output folder")
         self.pick_output_button = QPushButton("Choose Output Folder")
@@ -793,6 +805,7 @@ class WelcomePage(QWidget):
 
     def _create_filter_combo(self, placeholder: str) -> CheckableComboBox:
         combo = CheckableComboBox(placeholder)
+        combo.setMinimumWidth(0)
         combo.setEnabled(False)
         combo.reset(placeholder)
         return combo
@@ -978,6 +991,8 @@ class HistoryPage(QWidget):
         heading.setObjectName("pageTitle")
         description = QLabel("Select an analysis run to inspect its validation failure totals.")
         description.setObjectName("supportingText")
+        description.setWordWrap(True)
+        description.setMinimumWidth(0)
         layout.addWidget(heading)
         layout.addWidget(description)
 

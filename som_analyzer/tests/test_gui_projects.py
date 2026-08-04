@@ -167,6 +167,36 @@ class ProjectNavigationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(columns.layout().direction(), QBoxLayout.Direction.LeftToRight)
 
+    def test_workspace_content_fits_minimum_window_width(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+        self.addCleanup(window.close)
+        window.resize(980, 660)
+        window.show()
+        window.project_page.som_button.click()
+        self.app.processEvents()
+
+        analysis_scroll = window.som_pages.currentWidget()
+        self.assertLessEqual(
+            window.welcome_page.minimumSizeHint().width(),
+            analysis_scroll.viewport().width(),
+        )
+        self.assertEqual(
+            window.welcome_page.workspace_columns.layout().direction(),
+            QBoxLayout.Direction.TopToBottom,
+        )
+
+        window.menu.setCurrentRow(1)
+        self.app.processEvents()
+        history_scroll = window.som_pages.currentWidget()
+        self.assertLessEqual(
+            window.history_page.minimumSizeHint().width(),
+            history_scroll.viewport().width(),
+        )
+        self.assertEqual(
+            window.history_page.workspace_columns.layout().direction(),
+            QBoxLayout.Direction.TopToBottom,
+        )
+
     def test_analysis_pages_expose_empty_and_semantic_status_states(self) -> None:
         window = MainWindow(SomAnalyzeController())
 

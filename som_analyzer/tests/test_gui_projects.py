@@ -1,15 +1,26 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+import tempfile
 import unittest
-from unittest.mock import patch
+from contextlib import closing
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pandas as pd
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
 
+from som_analyzer.gui import app as gui_app
+from som_analyzer.analysis.edct import EdctRowResult
 from som_analyzer.gui.app import SomAnalyzeController
-from som_analyzer.gui.screens import MainWindow, ResponsiveColumns
+from som_analyzer.gui.screens import AnalysisWorker, CheckableComboBox, MainWindow, ResponsiveColumns
+from som_analyzer.gui import screens
 from som_analyzer.gui import styles
 
 
@@ -266,3 +277,272 @@ class ProjectNavigationTests(unittest.TestCase):
             window.edct_page.preview_columns,
             ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment"),
         )
+
+    def test_checkable_combo_selection_and_reset(self) -> None:
+        combo = CheckableComboBox("Choose")
+        combo.set_values(["Alpha", "Beta", "Gamma"])
+        model = combo.model()
+        self.assertIsInstance(model, QStandardItemModel)
+        self.assertTrue(combo.has_loaded_values())
+        combo._toggle_item(model.index(1, 0))
+        self.assertEqual(combo.checked_values(), ["Alpha"])
+        self.assertEqual(combo.lineEdit().text(), "Alpha")
+        combo._toggle_item(model.index(2, 0))
+        combo._toggle_item(model.index(3, 0))
+        self.assertEqual(combo.lineEdit().text(), "3 selected")
+        combo._toggle_item(model.index(1, 0))
+        combo._toggle_item(model.index(2, 0))
+        combo._toggle_item(model.index(3, 0))
+        self.assertEqual(combo.lineEdit().text(), "All")
+        combo._keep_popup_open = True
+        combo.hidePopup()
+        self.assertFalse(combo._keep_popup_open)
+        combo.reset("Unavailable")
+        self.assertFalse(combo.isEnabled())
+        self.assertFalse(combo.has_loaded_values())
+        combo._toggle_item(model.index(-1, -1))
+        combo._toggle_item(combo.model().index(0, 0))
+
+        combo.set_values(["Alpha", "Beta"])
+        model = combo.model()
+        model.item(1).setCheckState(Qt.CheckState.Checked)
+        model.item(0).setCheckState(Qt.CheckState.Unchecked)
+        combo._toggle_item(model.index(0, 0))
+        self.assertEqual(combo.checked_values(), [])
+
+    def test_analysis_worker_emits_success_and_error(self) -> None:
+        success: list[tuple[object, str, str]] = []
+        worker = AnalysisWorker(lambda: ({"ok": True}, Path("out.xlsx")))
+        worker.finished.connect(lambda *values: success.append(values))
+        worker.run()
+        self.assertEqual(success, [({"ok": True}, "out.xlsx", "")])
+
+        failure: list[tuple[object, str, str]] = []
+        worker = AnalysisWorker(lambda: (_ for _ in ()).throw(ValueError("boom")))
+        worker.finished.connect(lambda *values: failure.append(values))
+        worker.run()
+        self.assertEqual(failure, [(None, "", "boom")])
+
+    def test_controller_lifecycle_and_disconnected_defaults(self) -> None:
+        controller = SomAnalyzeController()
+        controller.shutdown()
+        self.assertEqual(controller.history_runs(), [])
+        self.assertEqual(controller.history_columns(1), [])
+        controller.delete_history_run(1)
+
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.row_factory = sqlite3.Row
+            with patch.object(gui_app, "open_connection", return_value=connection):
+                controller.startup()
+                self.assertEqual(controller.history_runs(), [])
+                self.assertEqual(controller.history_columns(1), [])
+                controller.delete_history_run(1)
+                controller.shutdown()
+                self.assertIsNone(controller.connection)
+
+        with patch.object(gui_app, "open_connection", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Failed to open"):
+                SomAnalyzeController().startup()
+
+    def test_som_file_filters_and_completion_callbacks(self) -> None:
+        window = MainWindow(HistoryController())
+        page = window.welcome_page
+        frame = pd.DataFrame({"Plant": [" b ", "A", "", None], "Contacted": ["YES"] * 4})
+        self.assertEqual(page._distinct_column_values(frame, "Plant"), ["A", "b"])
+        self.assertEqual(page._distinct_column_values(frame, "missing"), [])
+
+        with patch("som_analyzer.gui.screens.QFileDialog.getOpenFileName", return_value=("input.xlsx", "")), patch.object(page, "_load_filter_values") as load:
+            page._pick_input_file()
+        self.assertEqual(page.input_file.text(), "input.xlsx")
+        load.assert_called_once_with("input.xlsx")
+        with patch("som_analyzer.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/output"):
+            page._pick_output_directory()
+        self.assertEqual(page.output_dir.text(), "C:/output")
+
+        with patch("som_analyzer.gui.screens.load_excel", return_value=frame):
+            page._load_filter_values("input.xlsx")
+        page.filter_combos["Plant"]._toggle_item(page.filter_combos["Plant"].model().index(1, 0))
+        filters = page._selected_scope_filters()
+        self.assertEqual(filters[0].allowed_values, ("A",))
+        with patch("som_analyzer.gui.screens.load_excel", side_effect=ValueError("bad workbook")):
+            page._load_filter_values("bad.xlsx")
+        self.assertIn("could not be loaded", page.status.text())
+
+        page._on_run_finished(None, "", "boom")
+        self.assertIn("boom", page.status.text())
+        page._on_run_finished(None, "", "")
+        self.assertIn("unknown error", page.status.text())
+        result = SimpleNamespace(
+            run_id=3,
+            duration_s=0.25,
+            final_df=pd.DataFrame({"Check": [0, 1], "Comment": ["ok", "bad"]}),
+            in_scope_df=pd.DataFrame({"Check": [0, 1]}),
+        )
+        page._on_run_finished(result, "result.xlsx", "")
+        self.assertEqual(page.result_path_value.text(), "result.xlsx")
+        self.assertEqual(page.preview_table.rowCount(), 2)
+        page._clear_worker_references()
+        self.assertIsNone(page._run_thread)
+
+    def test_history_empty_selection_and_edct_dialog_callbacks(self) -> None:
+        window = MainWindow(HistoryController())
+        history = window.history_page
+        history.runs_table.setCurrentCell(-1, -1)
+        history._load_selected_run()
+        history._delete_run()
+        self.assertIn("Select an analysis run", history.columns_status.text())
+
+        page = window.edct_page
+        with patch("som_analyzer.gui.screens.QFileDialog.getOpenFileName", return_value=("edct.xlsx", "")):
+            page._pick_input()
+        with patch("som_analyzer.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/out"):
+            page._pick_output()
+        self.assertEqual((page.input_file.text(), page.output_dir.text()), ("edct.xlsx", "C:/out"))
+        page._finished(None, "", "boom")
+        self.assertIn("boom", page.status.text())
+        page._clear_worker()
+        self.assertIsNone(page._run_worker)
+
+    def test_analysis_helpers_delegate_and_dialog_cancellation_is_safe(self) -> None:
+        som_result = object()
+        edct_result = object()
+        with (
+            patch.object(screens, "run_analysis", return_value=som_result),
+            patch.object(screens, "export_result", return_value=Path("som.xlsx")),
+        ):
+            self.assertEqual(screens._run_som("in.xlsx", "out", ()), (som_result, Path("som.xlsx")))
+        with (
+            patch.object(screens, "run_edct_analysis", return_value=edct_result),
+            patch.object(screens, "export_edct_result", return_value=Path("edct.xlsx")),
+        ):
+            self.assertEqual(screens._run_edct("in.xlsx", "out"), (edct_result, Path("edct.xlsx")))
+
+        window = MainWindow(SomAnalyzeController())
+        with patch.object(screens.QFileDialog, "getOpenFileName", return_value=("", "")):
+            window.welcome_page._pick_input_file()
+            window.edct_page._pick_input()
+        with patch.object(screens.QFileDialog, "getExistingDirectory", return_value=""):
+            window.welcome_page._pick_output_directory()
+            window.edct_page._pick_output()
+
+    def test_run_callbacks_create_one_worker_and_guard_reentry(self) -> None:
+        class Signal:
+            def connect(self, callback) -> None:
+                pass
+
+        class Thread:
+            def __init__(self, parent=None) -> None:
+                self.started = Signal()
+                self.finished = Signal()
+                self.started_count = 0
+
+            def start(self) -> None:
+                self.started_count += 1
+
+            def quit(self) -> None:
+                pass
+
+            def deleteLater(self) -> None:
+                pass
+
+        window = MainWindow(SomAnalyzeController())
+        with patch.object(screens, "QThread", Thread), patch.object(AnalysisWorker, "moveToThread"):
+            page = window.welcome_page
+            page.input_file.setText("input.xlsx")
+            page.output_dir.setText("out")
+            page._on_run()
+            thread = page._run_thread
+            page._on_run()
+            self.assertEqual(thread.started_count, 1)
+
+            edct = window.edct_page
+            edct.input_file.setText("input.xlsx")
+            edct.output_dir.setText("out")
+            edct._run()
+            edct_thread = edct._run_thread
+            edct._run()
+            self.assertEqual(edct_thread.started_count, 1)
+
+    def test_run_callbacks_report_missing_paths(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+        som = window.welcome_page
+        som._on_run()
+        self.assertIn("input workbook", som.status.text())
+        som.input_file.setText("input.xlsx")
+        som._on_run()
+        self.assertIn("output folder", som.status.text())
+
+        edct = window.edct_page
+        edct._run()
+        self.assertIn("Choose an input", edct.status.text())
+
+    def test_negative_navigation_indices_and_logo_paths(self) -> None:
+        window = MainWindow(SomAnalyzeController())
+        window._on_menu_changed(-1)
+        window._on_edct_menu_changed(-1)
+        with patch.object(screens, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": True})):
+            with patch.object(screens, "QPixmap", return_value=QPixmap(1, 1)):
+                screens._create_sidebar("Test")
+                MainWindow(SomAnalyzeController())
+        with patch.object(screens, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": False})):
+            screens._create_sidebar("Test")
+            MainWindow(SomAnalyzeController())
+
+    def test_edct_success_populates_preview_and_history(self) -> None:
+        from collections import Counter
+        from datetime import datetime
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Supplier Level"
+        sheet.append(["metadata"] * 3)
+        sheet.append(["Index", "Supplier Punch code", "Supplier name"])
+        sheet.append(["I-1", 1001, "Supplier"])
+        result = screens.EdctRunResult(
+            5,
+            Path("input.xlsx"),
+            datetime.now(),
+            datetime.now(),
+            0.1,
+            workbook,
+            (3,),
+            {3: EdctRowResult(1, "bad value")},
+            Counter(),
+            False,
+            None,
+        )
+        window = MainWindow(HistoryController())
+        with patch.object(window.edct_history_page, "refresh_runs") as refresh:
+            window.edct_page._finished(result, "output.xlsx", "")
+        self.assertEqual(window.edct_page.preview_table.item(0, 0).text(), "I-1")
+        self.assertEqual(window.edct_page.result_path.text(), "output.xlsx")
+        refresh.assert_called_once_with()
+        workbook.close()
+
+    def test_run_app_bootstrap_always_shuts_down(self) -> None:
+        fake_qt = MagicMock()
+        fake_controller = MagicMock()
+        fake_window = MagicMock()
+        with (
+            patch("PyQt6.QtWidgets.QApplication", return_value=fake_qt),
+            patch.object(gui_app, "SomAnalyzeController", return_value=fake_controller),
+            patch.object(screens, "MainWindow", return_value=fake_window),
+            patch.object(gui_app, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": False})),
+        ):
+            gui_app.run_app()
+        fake_controller.startup.assert_called_once_with()
+        fake_window.show.assert_called_once_with()
+        fake_qt.exec.assert_called_once_with()
+        fake_controller.shutdown.assert_called_once_with()
+
+        fake_qt.reset_mock()
+        with (
+            patch("PyQt6.QtWidgets.QApplication", return_value=fake_qt),
+            patch("PyQt6.QtGui.QIcon", return_value=MagicMock()),
+            patch.object(gui_app, "SomAnalyzeController", return_value=fake_controller),
+            patch.object(screens, "MainWindow", return_value=fake_window),
+            patch.object(gui_app, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": True})),
+        ):
+            gui_app.run_app()
+        fake_qt.setWindowIcon.assert_called_once()

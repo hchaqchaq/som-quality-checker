@@ -1,19 +1,36 @@
 from __future__ import annotations
 
 import sqlite3
+import importlib.util
+import os
+import sys
 import tempfile
 import unittest
 from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
 from som_analyzer.analysis.loader import LoadError, load_excel
-from som_analyzer.analysis.runner import run_analysis
+from som_analyzer.analysis.runner import _build_export_target, export_result, run_analysis
+from som_analyzer.analysis import validator
 from som_analyzer.analysis.validator import build_default_rules, normalize
-from som_analyzer.config import TEXT_COLUMNS, WANTED_COLUMNS
-from som_analyzer.db.repository import RunRecord, initialize_schema, insert_run, list_runs
+from som_analyzer.config import ScopeFilterDefinition, TEXT_COLUMNS, WANTED_COLUMNS
+from som_analyzer.db.repository import (
+    ColumnRecord,
+    RunRecord,
+    delete_run,
+    get_run_columns,
+    initialize_schema,
+    insert_run,
+    list_runs,
+    open_connection,
+    update_run_exported_file,
+    update_run_status,
+)
+from som_analyzer.db import repository
 
 
 AS_OF = date(2026, 7, 15)
@@ -45,6 +62,31 @@ def results(rows: list[dict[str, object]]):
 
 
 class RuleTests(unittest.TestCase):
+    def test_validator_helpers_cover_dates_empty_values_and_scope_options(self) -> None:
+        self.assertTrue(validator.is_empty_value(None))
+        self.assertEqual(validator.parse_completion_date(datetime(2026, 7, 15)), AS_OF)
+        self.assertEqual(validator.parse_completion_date(AS_OF), AS_OF)
+        self.assertIsNone(validator.parse_completion_date(""))
+        self.assertEqual(validator.extract_note_dates("bad 31/02/2026 good 15/07/2026"), [AS_OF])
+
+        class BadMissing:
+            def __array__(self):
+                raise ValueError("no array")
+
+        self.assertFalse(validator.is_empty_value(BadMissing()))
+        frame = pd.DataFrame({"Contacted": [" YES ", "no"], "Plant": [149, 200]})
+        mask = validator.build_scope_mask(
+            frame,
+            (
+                ScopeFilterDefinition("Contacted", ("yes",), casefold=True),
+                ScopeFilterDefinition("Plant", (149,), normalize_text=False),
+            ),
+        )
+        self.assertEqual(mask.tolist(), [True, False])
+
+        with self.assertRaises(NotImplementedError):
+            validator.ValidationRule.evaluate(object(), frame)
+
     def test_new_rule_set_is_exclusive(self) -> None:
         self.assertEqual(
             [rule.rule_name for rule in build_default_rules(AS_OF)],
@@ -168,6 +210,16 @@ class RuleTests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_loader_reports_missing_and_unreadable_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.xlsx"
+            with self.assertRaisesRegex(LoadError, "Input file not found"):
+                load_excel(missing)
+            unreadable = Path(directory) / "broken.xlsx"
+            unreadable.write_text("not an Excel workbook", encoding="utf-8")
+            with self.assertRaisesRegex(LoadError, "Unable to read Excel file"):
+                load_excel(unreadable)
+
     def test_runner_checks_all_rows_and_aggregates_comments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.xlsx"
@@ -247,6 +299,116 @@ class IntegrationTests(unittest.TestCase):
 
             self.assertEqual([run["input_file"] for run in list_runs(connection, "SOM")], ["som.xlsx"])
             self.assertEqual([run["input_file"] for run in list_runs(connection, "eDCT")], ["edct.xlsx"])
+
+    def test_repository_run_lifecycle_and_nullable_export_migration(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.executescript(
+                """
+                CREATE TABLE runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL DEFAULT 'SOM',
+                    started_at TEXT NOT NULL, finished_at TEXT NOT NULL, duration_s REAL NOT NULL,
+                    input_file TEXT NOT NULL, exported_file TEXT NOT NULL, rows_total INTEGER NOT NULL,
+                    rows_in_scope INTEGER NOT NULL, rows_failed INTEGER NOT NULL, status TEXT NOT NULL,
+                    error_message TEXT
+                );
+                CREATE TABLE run_columns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                    rule_name TEXT NOT NULL, column_name TEXT NOT NULL, fail_count INTEGER NOT NULL
+                );
+                INSERT INTO runs VALUES (1, 'SOM', 'start', 'finish', 1, 'input.xlsx', 'old.xlsx', 2, 2, 1, 'ok', NULL);
+                INSERT INTO run_columns VALUES (1, 1, 'email', 'Quality contact', 1);
+                """
+            )
+            initialize_schema(connection)
+            self.assertEqual(connection.execute("SELECT exported_file FROM runs").fetchone()[0], "old.xlsx")
+            self.assertEqual(get_run_columns(connection, 1)[0]["fail_count"], 1)
+
+            run_id = insert_run(
+                connection,
+                RunRecord("SOM", "s", "f", 0.5, "new.xlsx", None, 1, 1, 0, "ok"),
+                [ColumnRecord("email", "Logistic contact", 2)],
+            )
+            update_run_exported_file(connection, run_id, "export.xlsx")
+            update_run_status(connection, run_id, "failed", "boom")
+            newest = list_runs(connection, limit=1)[0]
+            self.assertEqual(
+                (newest["exported_file"], newest["status"], newest["error_message"]),
+                ("export.xlsx", "failed", "boom"),
+            )
+            self.assertEqual(get_run_columns(connection, run_id)[0]["column_name"], "Logistic contact")
+            delete_run(connection, run_id)
+            self.assertEqual(list_runs(connection, limit=1)[0]["id"], 1)
+
+    def test_runner_scope_export_and_automatic_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "unsafe name.xlsx"
+            pd.DataFrame([row(Plant="149"), row(Plant="200")]).to_excel(input_path, index=False)
+            filters = (ScopeFilterDefinition("Plant", ("149",)),)
+            with patch("som_analyzer.analysis.runner.DB_PATH", root / "history.db"):
+                result = run_analysis(input_path, filters, analysis_date=AS_OF)
+                target = export_result(result, root / "exports")
+            self.assertEqual(len(result.in_scope_df), 1)
+            self.assertEqual(result.out_of_scope_df["Comment"].tolist(), ["Out of filters"])
+            self.assertTrue(target.exists())
+            self.assertRegex(target.name, r"unsafe_name_\d{8}_\d{6}\.xlsx")
+            self.assertEqual(_build_export_target(input_path, root / "named.xlsx").parent, root)
+
+    def test_open_connection_initializes_sqlite_options(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.db"
+            with patch("som_analyzer.db.repository.ensure_data_dir") as ensure:
+                with closing(open_connection(path)) as connection:
+                    self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+                    self.assertIsInstance(connection.execute("SELECT 1").fetchone(), sqlite3.Row)
+            ensure.assert_called_once_with()
+
+    def test_repository_migration_edge_paths(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY)")
+            repository._migrate_runs_exported_file_nullable(connection)
+            self.assertIn("exported_file", {row[1] for row in connection.execute("PRAGMA table_info(runs)")})
+
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.execute(
+                """CREATE TABLE runs (
+                id INTEGER PRIMARY KEY, project TEXT NOT NULL DEFAULT 'SOM', started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL, duration_s REAL NOT NULL, input_file TEXT NOT NULL,
+                exported_file TEXT NOT NULL, rows_total INTEGER NOT NULL, rows_in_scope INTEGER NOT NULL,
+                rows_failed INTEGER NOT NULL, status TEXT NOT NULL, error_message TEXT)"""
+            )
+            with self.assertRaisesRegex(sqlite3.OperationalError, "run_columns"):
+                repository._migrate_runs_exported_file_nullable(connection)
+
+        fake_connection = MagicMock()
+        fake_connection.execute.return_value.lastrowid = None
+        with self.assertRaisesRegex(RuntimeError, "Failed to persist"):
+            insert_run(
+                fake_connection,
+                RunRecord("SOM", "s", "f", 0, "in", None, 0, 0, 0, "ok"),
+                [],
+            )
+
+    def test_runner_without_database_and_export_without_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.xlsx"
+            pd.DataFrame([row()]).to_excel(input_path, index=False)
+            with patch("som_analyzer.analysis.runner.open_connection", return_value=None):
+                result = run_analysis(input_path, analysis_date=AS_OF)
+            self.assertEqual(result.run_id, -1)
+            self.assertTrue(export_result(result, root / "out").exists())
+
+    def test_frozen_config_uses_local_app_data(self) -> None:
+        config_path = Path(validator.__file__).parents[1] / "config.py"
+        spec = importlib.util.spec_from_file_location("frozen_config_for_test", config_path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.object(sys, "frozen", True, create=True), patch.dict(os.environ, {"LOCALAPPDATA": "C:/Local"}), patch.dict(sys.modules, {"frozen_config_for_test": module}):
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
+        self.assertEqual(module.DATA_DIR, Path("C:/Local") / "SOM Quality Checker")
 
 
 if __name__ == "__main__":

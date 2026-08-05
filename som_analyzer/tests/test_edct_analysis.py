@@ -5,7 +5,8 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from datetime import date
+from collections import Counter
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree
@@ -167,6 +168,214 @@ def remap_table_relationship(path: Path, relationship_id: str) -> None:
 
 
 class EdctWorkbookTests(unittest.TestCase):
+    def test_edct_helpers_cover_dates_failure_count_and_missing_table(self) -> None:
+        self.assertEqual(edct_analysis._parse_date(datetime(2026, 7, 15)), date(2026, 7, 15))
+        self.assertEqual(edct_analysis._parse_date(date(2026, 7, 15)), date(2026, 7, 15))
+        result = edct_analysis.EdctRunResult(
+            -1,
+            Path("input.xlsx"),
+            datetime.now(),
+            datetime.now(),
+            0.0,
+            object(),
+            (3, 4),
+            {
+                3: edct_analysis.EdctRowResult(0, "ok"),
+                4: edct_analysis.EdctRowResult(2, "bad"),
+            },
+            Counter(),
+            False,
+            None,
+        )
+        self.assertEqual(result.rows_failed, 1)
+        worksheet = Workbook().active
+        with self.assertRaisesRegex(EdctLoadError, "Missing required table"):
+            edct_analysis._result_columns(worksheet)
+
+    def test_missing_path_and_combined_structure_errors_are_recorded(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as connection:
+            with self.assertRaisesRegex(EdctLoadError, "Input file not found"):
+                run_edct_analysis("missing.xlsx", connection=connection)
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "broken.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Supplier Level"
+            workbook.active.append(["metadata"])
+            workbook.active.append(["Wrong header"])
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                with self.assertRaisesRegex(EdctLoadError, "sheets: Open Task; columns:"):
+                    run_edct_analysis(path, connection=connection)
+
+    def test_open_task_header_and_invalid_overseas_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(directory, row_overrides={3: {"Overseas": "MAYBE"}})
+            workbook = load_workbook(path)
+            workbook["Open Task"]["A2"] = "Wrong"
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                with self.assertRaisesRegex(EdctLoadError, "Open Task.Punch Code"):
+                    run_edct_analysis(path, connection=connection)
+
+            path = build_edct_workbook(directory, row_overrides={3: {"Overseas": "MAYBE"}})
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+            self.assertIn("Overseas", result.row_results[3].comment)
+            result.workbook.close()
+
+    def test_open_task_helper_and_columns_only_structure_error(self) -> None:
+        workbook = Workbook()
+        workbook.active.title = "Open Task"
+        workbook.active.append(["metadata"])
+        workbook.active.append(["Wrong"])
+        with self.assertRaisesRegex(EdctLoadError, "Punch Code"):
+            edct_analysis._open_task_punches(workbook)
+        workbook.close()
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "columns.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Supplier Level"
+            workbook.active.append(["metadata"])
+            workbook.active.append(["Index"])
+            open_task = workbook.create_sheet("Open Task")
+            open_task.append(["metadata"])
+            open_task.append(["Punch Code"])
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                with self.assertRaisesRegex(EdctLoadError, "columns:"):
+                    run_edct_analysis(path, connection=connection)
+
+    def test_default_history_connection_and_no_history_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            with patch.object(edct_analysis, "DB_PATH", directory / "history.db"):
+                result = run_edct_analysis(input_path, analysis_date=date(2026, 7, 15))
+                self.assertTrue(result.uses_default_db)
+                output = export_edct_result(result, directory / "out")
+            self.assertTrue(output.exists())
+            result.workbook.close()
+
+        no_history = edct_analysis.EdctRunResult(
+            -1,
+            Path("input.xlsx"),
+            datetime.now(),
+            datetime.now(),
+            0.0,
+            object(),
+            (),
+            {},
+            Counter(),
+            False,
+            None,
+        )
+        called = False
+
+        def action(connection) -> None:
+            nonlocal called
+            called = True
+
+        edct_analysis._update_result_history(no_history, action)
+        self.assertFalse(called)
+
+    def test_result_columns_fill_intermediate_blank_header(self) -> None:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["metadata", "metadata", "metadata", "metadata"])
+        sheet.append(["Index", "Value", "", "Check"])
+        sheet.append(["A", "x", "", ""])
+        table = Table(displayName="Tabella2", ref="A2:B3")
+        sheet.add_table(table)
+        check_column, comment_column = edct_analysis._result_columns(sheet)
+        self.assertEqual((check_column, comment_column), (4, 5))
+        self.assertEqual(sheet.cell(2, 3).value, "Column 3")
+        self.assertEqual(table.ref, "A2:E3")
+        workbook.close()
+
+    def test_empty_assessment_supplier_missing_and_detached_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(directory)
+            workbook = load_workbook(path)
+            headers = edct_analysis._header_map(workbook["Supplier Level"])
+            row_results, totals = edct_analysis._evaluate_business_rules(
+                workbook, headers, (), date(2026, 7, 15)
+            )
+            self.assertEqual((row_results, totals), ({}, Counter()))
+            workbook.close()
+
+            path = directory / "open-only.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Open Task"
+            workbook.active.append(["metadata"])
+            workbook.active.append(["Punch Code"])
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                with self.assertRaisesRegex(EdctLoadError, "sheets: Supplier Level"):
+                    run_edct_analysis(path, connection=connection)
+
+        detached = edct_analysis.EdctRunResult(
+            1, Path("input.xlsx"), datetime.now(), datetime.now(), 0, object(), (), {}, Counter(), False, None
+        )
+        called = False
+
+        def action(connection) -> None:
+            nonlocal called
+            called = True
+
+        edct_analysis._update_result_history(detached, action)
+        self.assertFalse(called)
+
+    def test_ooxml_extension_restoration_and_missing_merge_parts(self) -> None:
+        worksheet_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        source_xml = (
+            f'<worksheet xmlns="{worksheet_ns}" xmlns:r="{rel_ns}">'
+            '<items><item id="one"><extLst><ext uri="keep" /></extLst></item>'
+            '<item id="two"><extLst><ext uri="add" /></extLst></item></items>'
+            '<tableParts><tablePart r:id="rIdOld" /></tableParts></worksheet>'
+        ).encode()
+        target_xml = (
+            f'<worksheet xmlns="{worksheet_ns}" xmlns:r="{rel_ns}">'
+            '<items><item id="one"><extLst><ext uri="replace" /></extLst></item>'
+            '<item id="two"><value /></item></items>'
+            '<tableParts><tablePart r:id="rIdNew" /></tableParts></worksheet>'
+        ).encode()
+        source_custom = b'<root><item id="missing"><extLst><ext uri="custom" /></extLst></item></root>'
+        target_custom = b'<root><item id="different" /></root>'
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            source = directory / "source.xlsx"
+            target = directory / "target.xlsx"
+            for path, content in ((source, source_xml), (target, target_xml)):
+                with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+                    archive.writestr("xl/worksheets/sheet1.xml", content)
+                    archive.writestr("custom.xml", source_custom if path == source else target_custom)
+            edct_analysis._preserve_ooxml_extensions(
+                source, target, {"xl/worksheets/sheet1.xml", "custom.xml"}
+            )
+            with ZipFile(target) as archive:
+                restored = archive.read("xl/worksheets/sheet1.xml")
+            self.assertIn(b"keep", restored)
+            self.assertNotIn(b"replace", restored)
+            self.assertIn(b"rIdOld", restored)
+
+            annotated = directory / "annotated.xlsx"
+            merged = directory / "merged.xlsx"
+            with ZipFile(annotated, "w", ZIP_DEFLATED) as archive:
+                archive.writestr("other.xml", b"x")
+            with self.assertRaisesRegex(EdctLoadError, "Missing generated workbook parts"):
+                edct_analysis._merge_annotated_parts(
+                    source, annotated, merged, {"xl/worksheets/sheet1.xml"}
+                )
+
     def test_rule_documentation_lists_every_required_edct_column(self) -> None:
         documentation = (
             Path(__file__).resolve().parents[2] / "docs" / "EDCT_VALIDATION_RULES.md"
@@ -211,7 +420,11 @@ class EdctWorkbookTests(unittest.TestCase):
             for line in field_rules.splitlines()
             if line.startswith("| `")
         )
-        self.assertEqual(documented_rows, EDCT_RULE_CATALOGUE_ROWS)
+        cells = lambda line: tuple(cell.strip() for cell in line.strip("|").split("|"))
+        self.assertEqual(
+            tuple(map(cells, documented_rows)),
+            tuple(map(cells, EDCT_RULE_CATALOGUE_ROWS)),
+        )
 
     def test_complete_workbook_is_annotated_and_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

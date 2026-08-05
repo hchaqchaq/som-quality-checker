@@ -14,7 +14,7 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 
 ## Result
 
-Each failed field or condition adds one to `Check`. `Comment` groups fields with the same failure reason and separates different reasons with ` | `. A row without failures receives `Check = 0` and `Quality check passed`.
+Each failed field or condition adds one to `Check`. `Comment` groups fields with the same failure reason and separates different reasons with `|`. A row without failures receives `Check = 0` and `Quality check passed`.
 
 The exported workbook preserves the source values and worksheets. `Check` and `Comment` are added or replaced inside `Tabella2`.
 
@@ -104,23 +104,23 @@ The checker does not calculate formulas or validate their displayed results.
 
 ## Field rules
 
-| Fields | Applies when | Empty allowed | Accepted value |
-|---|---|---:|---|
-| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | One plain email or plain emails separated only by `;` |
-| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | One plain email or plain emails separated only by `;` |
-| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |
-| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |
-| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |
-| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD.MM.YYYY`; today or earlier |
-| `Comments`, `Kick-off comments` | When populated | Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment` |
-| `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD.MM.YYYY: comment` |
-| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |
-| `Overseas` | Always | Yes | `YES` or `NO` |
-| `Shipping location` | `Overseas = YES` | No | `YES` or `NO` |
-| `Supplier Confimation` | Always | Yes | `YES` |
-| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |
-| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |
-| `OPEN TASK` | Cross-checked for every assessed row | Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise |
+| Fields                                                                                                                                                                              | Applies when                                              | Empty allowed | Accepted value                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------: | ---------------------------------------------------------------------- |
+| `Sales contact`, `Logistic contact`                                                                                                                                                 | `Effective kick-off date` is populated                    |           Yes | Plain emails separated by `;`; trailing semicolons are ignored         |
+| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants`       | When populated                                            |           Yes | Plain emails separated by `;`; trailing semicolons are ignored         |
+| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor`                                                                                                                | `Effective kick-off date` is populated                    |           Yes | Six alphanumeric characters, two spaces, two alphanumeric characters   |
+| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7`                                                                                                                 | When populated                                            |           Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |
+| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated                                            |           Yes | Native Excel date or `DD.MM.YYYY`                                      |
+| `Effective kick-off date`                                                                                                                                                           | When populated                                            |           Yes | Native Excel date or `DD.MM.YYYY`; today or earlier                    |
+| `Comments`, `Kick-off comments`                                                                                                                                                     | When populated                                            |           Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment`                         |
+| `Readiness Comments`, `EDI Comments`                                                                                                                                                | When populated                                            |           Yes | `DD.MM.YYYY: comment`                                                  |
+| `Triple Status`                                                                                                                                                                     | `Cofor created date` is populated                         |            No | `Valid` or `No Valid`                                                  |
+| `Overseas`                                                                                                                                                                          | Always                                                    |           Yes | `YES` or `NO`                                                          |
+| `Shipping location`                                                                                                                                                                 | `Overseas = YES`                                          |            No | `YES` or `NO`                                                          |
+| `Supplier Confimation`                                                                                                                                                              | Always                                                    |           Yes | `YES`                                                                  |
+| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS`                                                                                                                     | Required after `Effective kick-off date`; optional before |   Conditional | `YES` or `NOT`                                                         |
+| `EDI Mode`                                                                                                                                                                          | Required after `Cofor created date`; optional before      |   Conditional | `WEB EDI` or `Standard EDI`                                            |
+| `OPEN TASK`                                                                                                                                                                         | Cross-checked for every assessed row                      |   Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise       |
 
 Choice comparisons trim surrounding whitespace and ignore case. The exported workbook retains the original cell values.
 

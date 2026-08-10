@@ -5,9 +5,10 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 
 ## Workbook boundary
 
-- Required worksheets: `Supplier Level` and `Open Task`.
+- Required worksheets: `Supplier Level`, `Open Task`, and `Template-Cofor-Creation`.
 - `Supplier Level` headers are on row 2.
 - `Open Task` must contain `Punch Code`.
+- `Template-Cofor-Creation` must contain `Punch Code` in `D1`; reference values are read from `D3` downward.
 - A row is assessed only when `Index` is populated.
 - `Supplier Punch code` identifies the supplier for the cross-sheet rule.
 - `Supplier name` is included in the result preview.
@@ -62,6 +63,7 @@ This list is checked automatically against the executable configuration:
 - `Kick-off meeting postponed date`
 - `Effective kick-off date`
 - `Cofor created date`
+- `Creation of Cofors request date`
 - `DDE Validated date /sent to edi team`
 - `Comments`
 - `Kick-off comments`
@@ -111,6 +113,7 @@ The checker does not calculate formulas or validate their displayed results.
 | `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor`                                                                                                                | `Effective kick-off date` is populated                    |           Yes | Six alphanumeric characters, two spaces, two alphanumeric characters   |
 | `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7`                                                                                                                 | When populated                                            |           Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |
 | `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated                                            |           Yes | Native Excel date or `DD.MM.YYYY`                                      |
+| `Creation of Cofors request date` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD.MM.YYYY` |
 | `Effective kick-off date`                                                                                                                                                           | When populated                                            |           Yes | Native Excel date or `DD.MM.YYYY`; today or earlier                    |
 | `Comments`, `Kick-off comments`                                                                                                                                                     | When populated                                            |           Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment`                         |
 | `Readiness Comments`, `EDI Comments`                                                                                                                                                | When populated                                            |           Yes | `DD.MM.YYYY: comment`                                                  |
@@ -143,7 +146,6 @@ These legacy source fields remain unchanged and do not add failures:
 - `Incoterm`
 - `Planned Kick-off week`
 - `ABP Training`
-- `Creation of Cofors request date`
 - `EDI EQP No`
 - `EDI Scenario`
 - `Date of Start of EDI validation / migration`

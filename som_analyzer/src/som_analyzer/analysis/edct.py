@@ -31,6 +31,11 @@ from ..db.repository import (
 from ..edct_config import (
     EDCT_COFOR_COLUMNS,
     EDCT_DATED_COMMENT_COLUMNS,
+    EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW,
+    EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
+    EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
+    EDCT_COFOR_REQUEST_DATE_COLUMN,
+    EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_DATE_COLUMNS,
     EDCT_EMAIL_COLUMNS,
     EDCT_EDI_MODE_VALUES,
@@ -166,6 +171,18 @@ def _open_task_punches(workbook) -> set[str]:
         if (punch := _normalized_punch(worksheet.cell(row, column).value))
     }
 
+def _cofor_template_punches(workbook) -> set[str]:
+    worksheet = workbook[EDCT_COFOR_TEMPLATE_SHEET]
+    return {
+        punch
+        for row in range(EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW, worksheet.max_row + 1)
+        if (
+            punch := _normalized_choice(
+                worksheet.cell(row, EDCT_COFOR_TEMPLATE_PUNCH_COLUMN).value
+            )
+        )
+    }
+
 
 def _evaluate_business_rules(
     workbook,
@@ -189,6 +206,7 @@ def _evaluate_business_rules(
     yes_no_values = {item.casefold() for item in EDCT_YES_NO_VALUES}
     portal_values = {item.casefold() for item in EDCT_PORTAL_VALUES}
     edi_mode_values = {item.casefold() for item in EDCT_EDI_MODE_VALUES}
+    cofor_template_punches = _cofor_template_punches(workbook)
     if assessed_rows:
         reference_row = assessed_rows[0]
         for column in EDCT_FORMULA_COLUMNS:
@@ -237,7 +255,12 @@ def _evaluate_business_rules(
         for column in EDCT_DATE_COLUMNS:
             raw = value(row, column)
             if _normalized_text(raw) and _parse_date(raw) is None:
-                fail(row, "date", column, "Invalid date")
+                reason = (
+                    f"{EDCT_COFOR_REQUEST_DATE_COLUMN} has an invalid date format"
+                    if column == EDCT_COFOR_REQUEST_DATE_COLUMN
+                    else "Invalid date"
+                )
+                fail(row, "date", column, reason)
         if effective_date is not None and effective_date > analysis_date:
             fail(row, "date_future", "Effective kick-off date", "Date cannot be in the future")
 
@@ -273,6 +296,19 @@ def _evaluate_business_rules(
         if edi_mode not in allowed_edi_modes:
             fail(row, "edi_mode", "EDI Mode", "Required value must be WEB EDI or Standard EDI")
 
+        punch_in_cofor_template = (
+            _normalized_choice(value(row, "Supplier Punch code")) in cofor_template_punches
+        )
+        if punch_in_cofor_template and not _normalized_text(
+            value(row, EDCT_COFOR_REQUEST_DATE_COLUMN)
+        ):
+            fail(
+                row,
+                "date_required",
+                EDCT_COFOR_REQUEST_DATE_COLUMN,
+                f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is required because the Punch Code exists "
+                "in Template-Cofor-Creation",
+            )
         punch_in_open_task = _normalized_punch(value(row, "Supplier Punch code")) in open_task_punches
         open_task_value = _normalized_choice(value(row, "OPEN TASK"))
         if punch_in_open_task and open_task_value != "yes":
@@ -370,6 +406,15 @@ def run_edct_analysis(
             missing_columns.extend(column for column in EDCT_REQUIRED_COLUMNS if column not in headers)
         if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(workbook["Open Task"]):
             missing_columns.append("Open Task.Punch Code")
+        if EDCT_COFOR_TEMPLATE_SHEET in workbook.sheetnames:
+            punch_header = workbook[EDCT_COFOR_TEMPLATE_SHEET].cell(
+                1,
+                EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
+            ).value
+            if punch_header != EDCT_COFOR_TEMPLATE_PUNCH_HEADER:
+                missing_columns.append(
+                    f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({EDCT_COFOR_TEMPLATE_PUNCH_HEADER})"
+                )
         if missing_sheets or missing_columns:
             workbook.close()
             parts = []

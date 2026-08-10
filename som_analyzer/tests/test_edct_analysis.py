@@ -43,6 +43,7 @@ def build_edct_workbook(
     *,
     include_open_task: bool = True,
     row_overrides: dict[int, dict[str, object]] | None = None,
+    include_cofor_template: bool = True,
 ) -> Path:
     workbook = Workbook()
     supplier = workbook.active
@@ -83,6 +84,11 @@ def build_edct_workbook(
         open_task.append(["metadata"])
         open_task.append(["Punch Code"])
         open_task.append([1003])
+    if include_cofor_template:
+        cofor_template = workbook.create_sheet("Template-Cofor-Creation")
+        cofor_template["D1"] = "Punch Code"
+        cofor_template["D2"] = "=D3"
+        cofor_template["D3"] = "9999"
     workbook.create_sheet("Other Sheet")["A1"] = "keep me"
 
     path = directory / "input.xlsx"
@@ -206,7 +212,10 @@ class EdctWorkbookTests(unittest.TestCase):
             workbook.save(path)
             workbook.close()
             with closing(sqlite3.connect(":memory:")) as connection:
-                with self.assertRaisesRegex(EdctLoadError, "sheets: Open Task; columns:"):
+                with self.assertRaisesRegex(
+                    EdctLoadError,
+                    r"sheets: Open Task, Template-Cofor-Creation; columns:",
+                ):
                     run_edct_analysis(path, connection=connection)
 
     def test_open_task_header_and_invalid_overseas_are_reported(self) -> None:
@@ -442,7 +451,10 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertEqual(result.assessed_rows, (3, 4))
             self.assertEqual([row["project"] for row in runs], ["eDCT"])
             self.assertEqual([row["rows_total"] for row in runs], [2])
-            self.assertEqual(exported.sheetnames, ["Supplier Level", "Open Task", "Other Sheet"])
+            self.assertEqual(
+                exported.sheetnames,
+                ["Supplier Level", "Open Task", "Template-Cofor-Creation", "Other Sheet"],
+            )
             self.assertEqual(exported["Other Sheet"]["A1"].value, "keep me")
             self.assertEqual(supplier["A3"].fill.fgColor.rgb, "00FF0000")
             self.assertIn("Check", headers)
@@ -688,6 +700,118 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertIn(column, result.row_results[3].comment)
         self.assertIn("first@example.com, second@example.com", result.row_results[3].comment)
         self.assertIn("Name - person@example.com", result.row_results[3].comment)
+
+    def test_creation_of_cofors_request_date_accepts_only_supported_dates(self) -> None:
+        scenarios = (
+            ("empty", "", 0),
+            ("native date", date(2026, 8, 10), 0),
+            ("strict text", "10.08.2026", 0),
+            ("future date", "10.08.2030", 0),
+            ("slash date", "10/08/2026", 1),
+            ("impossible date", "31.02.2026", 1),
+            ("timestamp text", "10.08.2026 12:00", 1),
+        )
+        for label, request_date, expected_check in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(
+                    Path(temp),
+                    row_overrides={
+                        3: {
+                            "Supplier Punch code": "unmatched",
+                            "OPEN TASK": "",
+                            "Creation of Cofors request date": request_date,
+                        }
+                    },
+                )
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(path, connection=connection)
+
+                self.assertEqual(result.row_results[3].check, expected_check)
+                if expected_check:
+                    self.assertIn(
+                        "Creation of Cofors request date has an invalid date format",
+                        result.row_results[3].comment,
+                    )
+
+    def test_matching_cofor_template_punch_requires_request_date(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(Path(temp))
+            workbook = load_workbook(path)
+            workbook["Template-Cofor-Creation"]["D3"] = " 1003 "
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+
+            self.assertEqual(result.row_results[3].check, 1)
+            self.assertIn(
+                "Creation of Cofors request date is required because the Punch Code exists in "
+                "Template-Cofor-Creation",
+                result.row_results[3].comment,
+            )
+            self.assertEqual(
+                result.rule_totals[("date_required", "Creation of Cofors request date")],
+                1,
+            )
+            self.assertEqual(result.row_results[4].check, 0)
+
+    def test_cofor_template_matching_is_normalized_but_not_fuzzy(self) -> None:
+        scenarios = (
+            ("case and outer whitespace", " Ab- 01 ", "aB- 01", 1),
+            ("partial", "ABC123", "ABC", 0),
+            ("leading zero", "00123", "123", 0),
+            ("internal space", "AB 123", "AB123", 0),
+            ("punctuation", "AB-123", "AB123", 0),
+            ("numeric representation", "123.0", "123", 0),
+        )
+        for label, reference_punch, supplier_punch, expected_check in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(
+                    Path(temp),
+                    row_overrides={
+                        3: {
+                            "Supplier Punch code": supplier_punch,
+                            "OPEN TASK": "",
+                        }
+                    },
+                )
+                workbook = load_workbook(path)
+                workbook["Template-Cofor-Creation"]["D3"] = reference_punch
+                workbook.save(path)
+                workbook.close()
+
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(path, connection=connection)
+
+                self.assertEqual(result.row_results[3].check, expected_check)
+
+    def test_missing_or_malformed_cofor_template_stops_analysis(self) -> None:
+        scenarios = (
+            ("missing sheet", False, None, "Template-Cofor-Creation"),
+            (
+                "wrong D1 header",
+                True,
+                "Wrong header",
+                r"Template-Cofor-Creation\.D1 \(Punch Code\)",
+            ),
+        )
+        for label, include_sheet, header, expected_error in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(
+                    Path(temp),
+                    include_cofor_template=include_sheet,
+                )
+                if header is not None:
+                    workbook = load_workbook(path)
+                    workbook["Template-Cofor-Creation"]["D1"] = header
+                    workbook.save(path)
+                    workbook.close()
+
+                with (
+                    closing(sqlite3.connect(":memory:")) as connection,
+                    self.assertRaisesRegex(EdctLoadError, expected_error),
+                ):
+                    run_edct_analysis(path, connection=connection)
 
     def test_email_phone_and_dated_comment_boundaries(self) -> None:
         scenarios = (

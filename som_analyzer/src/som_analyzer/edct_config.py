@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 EDCT_PROJECT = "eDCT"
-EDCT_REQUIRED_SHEETS = ("Supplier Level", "Open Task")
+EDCT_REQUIRED_SHEETS = ("Supplier Level", "Open Task", "Template-Cofor-Creation")
 EDCT_HEADER_ROW = 2
 EDCT_INDEX_COLUMN = "Index"
+EDCT_COFOR_TEMPLATE_SHEET = "Template-Cofor-Creation"
+EDCT_COFOR_TEMPLATE_PUNCH_COLUMN = 4
+EDCT_COFOR_TEMPLATE_PUNCH_HEADER = "Punch Code"
+EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW = 3
+EDCT_COFOR_REQUEST_DATE_COLUMN = "Creation of Cofors request date"
 
 EDCT_FORMULA_COLUMNS = (
     "Onboarding Status",
@@ -46,6 +51,7 @@ EDCT_DATE_COLUMNS = (
     "Kick-off meeting postponed date",
     "Effective kick-off date",
     "Cofor created date",
+    EDCT_COFOR_REQUEST_DATE_COLUMN,
     "DDE Validated date /sent to edi team",
 )
 
@@ -64,6 +70,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
     "| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |",
     "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |",
+    f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD.MM.YYYY` |",
     "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD.MM.YYYY`; today or earlier |",
     "| `Comments`, `Kick-off comments` | When populated | Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment` |",
     "| `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD.MM.YYYY: comment` |",
@@ -92,7 +99,6 @@ EDCT_UNCHECKED_COLUMNS = (
     "Incoterm",
     "Planned Kick-off week",
     "ABP Training",
-    "Creation of Cofors request date",
     "EDI EQP No",
     "EDI Scenario",
     "Date of Start of EDI validation / migration",

@@ -218,6 +218,22 @@ class EdctWorkbookTests(unittest.TestCase):
                 ):
                     run_edct_analysis(path, connection=connection)
 
+    def test_line_header_can_define_assessed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(Path(temp))
+            workbook = load_workbook(path)
+            supplier = workbook["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            supplier.cell(2, headers.index("Index") + 1).value = "Line"
+            workbook.save(path)
+            workbook.close()
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+
+            self.assertEqual(result.assessed_rows, (3, 4))
+            result.workbook.close()
+
     def test_open_task_header_and_invalid_overseas_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

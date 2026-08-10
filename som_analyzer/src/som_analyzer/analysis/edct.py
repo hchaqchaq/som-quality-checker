@@ -42,6 +42,7 @@ from ..edct_config import (
     EDCT_FORMULA_COLUMNS,
     EDCT_HEADER_ROW,
     EDCT_INDEX_COLUMN,
+    EDCT_INDEX_COLUMNS,
     EDCT_PHONE_COLUMNS,
     EDCT_PHONE_DIGITS,
     EDCT_PORTAL_COLUMNS,
@@ -403,7 +404,13 @@ def run_edct_analysis(
         headers: dict[str, int] = {}
         if "Supplier Level" in workbook.sheetnames:
             headers = _header_map(workbook["Supplier Level"])
-            missing_columns.extend(column for column in EDCT_REQUIRED_COLUMNS if column not in headers)
+            missing_columns.extend(
+                column
+                for column in EDCT_REQUIRED_COLUMNS
+                if column != EDCT_INDEX_COLUMN and column not in headers
+            )
+            if not any(column in headers for column in EDCT_INDEX_COLUMNS):
+                missing_columns.append("Index or Line")
         if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(workbook["Open Task"]):
             missing_columns.append("Open Task.Punch Code")
         if EDCT_COFOR_TEMPLATE_SHEET in workbook.sheetnames:
@@ -425,10 +432,11 @@ def run_edct_analysis(
             raise EdctLoadError(f"Missing required structure: {'; '.join(parts)}")
 
         supplier = workbook["Supplier Level"]
+        index_column = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
         assessed_rows = tuple(
             row
             for row in range(EDCT_HEADER_ROW + 1, supplier.max_row + 1)
-            if _normalized_text(supplier.cell(row, headers[EDCT_INDEX_COLUMN]).value)
+            if _normalized_text(supplier.cell(row, headers[index_column]).value)
         )
         row_results, rule_totals = _evaluate_business_rules(
             workbook,

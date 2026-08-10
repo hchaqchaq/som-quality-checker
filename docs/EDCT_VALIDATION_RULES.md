@@ -9,7 +9,7 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 - `Supplier Level` headers are on row 2.
 - `Open Task` must contain `Punch Code`.
 - `Template-Cofor-Creation` must contain `Punch Code` in `D1`; reference values are read from `D3` downward.
-- A row is assessed only when `Index` is populated.
+- A row is assessed when either `Index` or `Line` is populated; workbooks may use either header.
 - `Supplier Punch code` identifies the supplier for the cross-sheet rule.
 - `Supplier name` is included in the result preview.
 

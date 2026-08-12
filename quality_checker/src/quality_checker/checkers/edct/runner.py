@@ -1,19 +1,19 @@
 from __future__ import annotations
 
+import re
+import sqlite3
 from collections import Counter
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
-import re
-import sqlite3
-from time import perf_counter
 from tempfile import NamedTemporaryFile
+from time import perf_counter
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import TableColumn
@@ -30,15 +30,15 @@ from ...db.repository import (
 )
 from .config import (
     EDCT_COFOR_COLUMNS,
-    EDCT_DATED_COMMENT_COLUMNS,
+    EDCT_COFOR_REQUEST_DATE_COLUMN,
     EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW,
     EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
     EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
-    EDCT_COFOR_REQUEST_DATE_COLUMN,
     EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_DATE_COLUMNS,
-    EDCT_EMAIL_COLUMNS,
+    EDCT_DATED_COMMENT_COLUMNS,
     EDCT_EDI_MODE_VALUES,
+    EDCT_EMAIL_COLUMNS,
     EDCT_FORMULA_COLUMNS,
     EDCT_HEADER_ROW,
     EDCT_INDEX_COLUMN,
@@ -75,7 +75,7 @@ class EdctRunResult:
     started_at: datetime
     finished_at: datetime
     duration_s: float
-    workbook: object
+    workbook: Workbook
     assessed_rows: tuple[int, ...]
     row_results: dict[int, EdctRowResult]
     rule_totals: Counter[tuple[str, str]]
@@ -135,7 +135,9 @@ def _is_valid_dated_comment(value: object, *, allow_slash: bool) -> bool:
     if not text:
         return True
     date_text, separator, comment = text.partition(":")
-    return bool(separator and comment.strip() and _parse_date(date_text.strip(), allow_slash=allow_slash))
+    return bool(
+        separator and comment.strip() and _parse_date(date_text.strip(), allow_slash=allow_slash)
+    )
 
 
 def _normalized_punch(value: object) -> str:
@@ -172,15 +174,14 @@ def _open_task_punches(workbook) -> set[str]:
         if (punch := _normalized_punch(worksheet.cell(row, column).value))
     }
 
+
 def _cofor_template_punches(workbook) -> set[str]:
     worksheet = workbook[EDCT_COFOR_TEMPLATE_SHEET]
     return {
         punch
         for row in range(EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW, worksheet.max_row + 1)
         if (
-            punch := _normalized_choice(
-                worksheet.cell(row, EDCT_COFOR_TEMPLATE_PUNCH_COLUMN).value
-            )
+            punch := _normalized_choice(worksheet.cell(row, EDCT_COFOR_TEMPLATE_PUNCH_COLUMN).value)
         )
     }
 
@@ -279,7 +280,10 @@ def _evaluate_business_rules(
         overseas = _normalized_choice(value(row, "Overseas"))
         if overseas not in {"", *yes_no_values}:
             fail(row, "overseas", "Overseas", "Invalid value")
-        if overseas == "yes" and _normalized_choice(value(row, "Shipping location")) not in yes_no_values:
+        if (
+            overseas == "yes"
+            and _normalized_choice(value(row, "Shipping location")) not in yes_no_values
+        ):
             fail(row, "shipping_location", "Shipping location", "Required value must be Yes or No")
 
         supplier_confirmation = _normalized_choice(value(row, "Supplier Confimation"))
@@ -310,12 +314,19 @@ def _evaluate_business_rules(
                 f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is required because the Punch Code exists "
                 "in Template-Cofor-Creation",
             )
-        punch_in_open_task = _normalized_punch(value(row, "Supplier Punch code")) in open_task_punches
+        punch_in_open_task = (
+            _normalized_punch(value(row, "Supplier Punch code")) in open_task_punches
+        )
         open_task_value = _normalized_choice(value(row, "OPEN TASK"))
         if punch_in_open_task and open_task_value != "yes":
             fail(row, "open_task", "OPEN TASK", "OPEN TASK must be YES for a matching punch code")
         elif not punch_in_open_task and open_task_value:
-            fail(row, "open_task", "OPEN TASK", "OPEN TASK must be empty when the punch code is absent")
+            fail(
+                row,
+                "open_task",
+                "OPEN TASK",
+                "OPEN TASK must be empty when the punch code is absent",
+            )
 
     row_results: dict[int, EdctRowResult] = {}
     for row, row_failures in failures.items():
@@ -326,7 +337,9 @@ def _evaluate_business_rules(
         for reason, column, invalid_value in row_failures:
             display_value = _normalized_text(invalid_value) or "<empty>"
             grouped.setdefault(reason, []).append(f"{column} = {display_value}")
-        comment = " | ".join(f"{reason}: {', '.join(columns)}" for reason, columns in grouped.items())
+        comment = " | ".join(
+            f"{reason}: {', '.join(columns)}" for reason, columns in grouped.items()
+        )
         row_results[row] = EdctRowResult(len(row_failures), comment)
     return row_results, totals
 
@@ -391,7 +404,7 @@ def run_edct_analysis(
     analysis_date: date | None = None,
 ) -> EdctRunResult:
     resolved_input = Path(input_path)
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     started_perf = perf_counter()
     history, own_connection = _open_history(connection)
 
@@ -399,7 +412,9 @@ def run_edct_analysis(
         if not resolved_input.exists():
             raise EdctLoadError(f"Input file not found: {resolved_input}")
         workbook = load_workbook(resolved_input, data_only=False)
-        missing_sheets = [sheet for sheet in EDCT_REQUIRED_SHEETS if sheet not in workbook.sheetnames]
+        missing_sheets = [
+            sheet for sheet in EDCT_REQUIRED_SHEETS if sheet not in workbook.sheetnames
+        ]
         missing_columns: list[str] = []
         headers: dict[str, int] = {}
         if "Supplier Level" in workbook.sheetnames:
@@ -411,13 +426,19 @@ def run_edct_analysis(
             )
             if not any(column in headers for column in EDCT_INDEX_COLUMNS):
                 missing_columns.append("Index or Line")
-        if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(workbook["Open Task"]):
+        if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(
+            workbook["Open Task"]
+        ):
             missing_columns.append("Open Task.Punch Code")
         if EDCT_COFOR_TEMPLATE_SHEET in workbook.sheetnames:
-            punch_header = workbook[EDCT_COFOR_TEMPLATE_SHEET].cell(
-                1,
-                EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
-            ).value
+            punch_header = (
+                workbook[EDCT_COFOR_TEMPLATE_SHEET]
+                .cell(
+                    1,
+                    EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
+                )
+                .value
+            )
             if punch_header != EDCT_COFOR_TEMPLATE_PUNCH_HEADER:
                 missing_columns.append(
                     f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({EDCT_COFOR_TEMPLATE_PUNCH_HEADER})"
@@ -444,7 +465,7 @@ def run_edct_analysis(
             assessed_rows,
             analysis_date or date.today(),
         )
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         duration_s = perf_counter() - started_perf
         run_id = _insert_history(
             history,
@@ -472,7 +493,7 @@ def run_edct_analysis(
             history_connection=None if own_connection else history,
         )
     except Exception as exc:
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         _insert_history(
             history,
             started_at=started_at,
@@ -511,9 +532,7 @@ def _result_columns(worksheet) -> tuple[int, int]:
                 if not header:
                     header = f"Column {added_column}"
                     worksheet.cell(EDCT_HEADER_ROW, added_column, header)
-                table.tableColumns.append(
-                    TableColumn(id=len(table.tableColumns) + 1, name=header)
-                )
+                table.tableColumns.append(TableColumn(id=len(table.tableColumns) + 1, name=header))
             max_col = column
         result_columns.append(column)
 
@@ -563,15 +582,15 @@ def _preserve_ooxml_extensions(
                     target_element.remove(existing)
                 target_element.extend(children)
                 continue
-            for source_child, target_child in zip(children, target_children.get(name, [])):
+            for source_child, target_child in zip(
+                children, target_children.get(name, []), strict=False
+            ):
                 restore_extensions(source_child, target_child)
 
     def restore_identified_extensions(source_root, target_root) -> None:
         target_elements = list(target_root.iter())
         for source_element in source_root.iter():
-            extensions = [
-                child for child in source_element if local_name(child) == "extLst"
-            ]
+            extensions = [child for child in source_element if local_name(child) == "extLst"]
             identity = {
                 attribute.rsplit("}", 1)[-1]: value
                 for attribute, value in source_element.attrib.items()
@@ -598,16 +617,14 @@ def _preserve_ooxml_extensions(
                 matches[0].extend(extensions)
 
     def restore_table_relationship_ids(source_root, target_root) -> None:
-        relationship_id = (
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-        )
+        relationship_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
         source_parts = [
             element for element in source_root.iter() if local_name(element) == "tablePart"
         ]
         target_parts = [
             element for element in target_root.iter() if local_name(element) == "tablePart"
         ]
-        for source_part, target_part in zip(source_parts, target_parts):
+        for source_part, target_part in zip(source_parts, target_parts, strict=False):
             target_part.set(relationship_id, source_part.attrib[relationship_id])
 
     with NamedTemporaryFile(dir=target.parent, suffix=".xlsx", delete=False) as temporary:
@@ -677,11 +694,13 @@ def _validate_analysis_workbook(path: Path) -> None:
 def export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
     try:
         return _export_edct_result(result, output_dir)
-    except Exception as exc:
-        _update_result_history(
-            result,
-            lambda connection: update_run_status(connection, result.run_id, "failed", str(exc)),
-        )
+    except Exception as error:
+        error_message = str(error)
+
+        def mark_export_failed(connection: sqlite3.Connection) -> None:
+            update_run_status(connection, result.run_id, "failed", error_message)
+
+        _update_result_history(result, mark_export_failed)
         raise
 
 

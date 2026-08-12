@@ -3,9 +3,15 @@ from __future__ import annotations
 import sqlite3
 import sys
 
-from .styles import APP_STYLESHEET
 from ..application import APP_LOGO_PATH, DB_PATH
-from ..db.repository import delete_run, get_run_columns, initialize_schema, list_runs, open_connection
+from ..db.repository import (
+    delete_run,
+    get_run_columns,
+    initialize_schema,
+    list_runs,
+    open_connection,
+)
+from .styles import APP_STYLESHEET
 
 
 class QualityCheckerController:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
-from .schema import SCHEMA_STATEMENTS
 from ..application import DB_PATH, ensure_data_dir
+from .schema import SCHEMA_STATEMENTS
 
 
 @dataclass(slots=True)
@@ -105,7 +105,9 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
     )
     connection.execute("DROP TABLE runs_old")
 
-    cursor = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_columns'")
+    cursor = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_columns'"
+    )
     if cursor.fetchone() is not None:
         connection.execute("ALTER TABLE run_columns RENAME TO run_columns_old")
         for statement in SCHEMA_STATEMENTS:
@@ -137,9 +139,9 @@ def _migrate_runs_exported_file_nullable(connection: sqlite3.Connection) -> None
 
 
 def insert_run(
-        connection: sqlite3.Connection,
-        run_record: RunRecord,
-        column_records: Iterable[ColumnRecord],
+    connection: sqlite3.Connection,
+    run_record: RunRecord,
+    column_records: Iterable[ColumnRecord],
 ) -> int:
     cursor = connection.execute(
         """
@@ -188,7 +190,9 @@ def insert_run(
     return run_id
 
 
-def list_runs(connection: sqlite3.Connection, project: str = "SOM", limit: int = 200) -> list[sqlite3.Row]:
+def list_runs(
+    connection: sqlite3.Connection, project: str = "SOM", limit: int = 200
+) -> list[sqlite3.Row]:
     cursor = connection.execute(
         """
         SELECT id,
@@ -232,7 +236,9 @@ def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
     connection.commit()
 
 
-def update_run_exported_file(connection: sqlite3.Connection, run_id: int, exported_file: str) -> None:
+def update_run_exported_file(
+    connection: sqlite3.Connection, run_id: int, exported_file: str
+) -> None:
     connection.execute("UPDATE runs SET exported_file = ? WHERE id = ?", (exported_file, run_id))
     connection.commit()
 

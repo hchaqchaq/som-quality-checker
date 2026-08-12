@@ -15,7 +15,7 @@ The app opens with a project selector:
 
 Both projects require the user to choose an input workbook and output folder. Their run histories are kept separate.
 
-See [eDCT validation rules](docs/EDCT_VALIDATION_RULES.md) for the complete eDCT rule catalogue.
+See [eDCT validation rules](docs/EDCT_QUALITY_CHECKER.md) for the complete eDCT rule catalogue.
 
 ## Package-local workflow
 

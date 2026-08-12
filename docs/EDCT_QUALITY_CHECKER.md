@@ -12,6 +12,7 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 - A row is assessed when either `Index` or `Line` is populated; workbooks may use either header.
 - `Supplier Punch code` identifies the supplier for the cross-sheet rule.
 - `Supplier name` is included in the result preview.
+- Export requires table `Tabella2` on `Supplier Level`; missing tables stop export after analysis.
 
 ## Result
 
@@ -173,3 +174,27 @@ These legacy source fields remain unchanged and do not add failures:
 On 2026-07-30, `materials/eDCT_input.xlsx` produced 112 assessed rows and 33 failed rows. The exported copy retained all 11 worksheets, all 16 XML parts containing extension lists, and every source package part; it contained `Check` and `Comment`, and the source file hash remained unchanged.
 
 Unsupported OOXML extension lists are restored from the source package after `openpyxl` saves the annotated workbook. Source cell values, formulas, styles, tables, worksheets, and legacy data-validation extensions are preserved.
+
+## Tracked rule identifiers
+
+Run history records one failure total per rule and field. Zero-failure rule/field pairs are not stored for eDCT.
+
+| Rule                    | Tracked fields or condition                                                  |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `formula`               | Every configured formula column                                              |
+| `email`                 | Every configured email column                                                |
+| `cofor`                 | `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor`         |
+| `phone`                 | `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7`          |
+| `date`                  | Every configured date column when its populated value has an invalid format  |
+| `date_future`           | `Effective kick-off date` when later than the analysis date                  |
+| `dated_comment`         | `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments`        |
+| `triple_status`         | `Triple Status`                                                              |
+| `overseas`              | `Overseas`                                                                   |
+| `shipping_location`     | `Shipping location`                                                          |
+| `supplier_confirmation` | `Supplier Confimation`                                                       |
+| `portal`                | `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS`              |
+| `edi_mode`              | `EDI Mode`                                                                   |
+| `date_required`         | `Creation of Cofors request date` when required by `Template-Cofor-Creation` |
+| `open_task`             | `OPEN TASK` for both matching and non-matching `Open Task` punch codes       |
+
+An empty required `Creation of Cofors request date` receives `date_required`; a populated value with an invalid format receives `date`. The two failures are mutually exclusive.

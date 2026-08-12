@@ -4,8 +4,8 @@ import re
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
 from collections import Counter
+from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -16,18 +16,16 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import Table, TableStyleInfo
-
 from quality_checker.checkers.edct import runner as edct_analysis
-from quality_checker.checkers.edct.runner import EdctLoadError, export_edct_result, run_edct_analysis
 from quality_checker.checkers.edct.config import (
     EDCT_COFOR_COLUMNS,
-    EDCT_DATED_COMMENT_COLUMNS,
     EDCT_DATE_COLUMNS,
+    EDCT_DATED_COMMENT_COLUMNS,
     EDCT_EDI_MODE_VALUES,
     EDCT_EMAIL_COLUMNS,
     EDCT_FORMULA_COLUMNS,
-    EDCT_PHONE_DIGITS,
     EDCT_PHONE_COLUMNS,
+    EDCT_PHONE_DIGITS,
     EDCT_PORTAL_COLUMNS,
     EDCT_PORTAL_VALUES,
     EDCT_REQUIRED_COLUMNS,
@@ -35,6 +33,11 @@ from quality_checker.checkers.edct.config import (
     EDCT_TRIPLE_STATUS_VALUES,
     EDCT_UNCHECKED_COLUMNS,
     EDCT_YES_NO_VALUES,
+)
+from quality_checker.checkers.edct.runner import (
+    EdctLoadError,
+    export_edct_result,
+    run_edct_analysis,
 )
 
 
@@ -66,7 +69,7 @@ def build_edct_workbook(
             }
         )
         for column in EDCT_FORMULA_COLUMNS:
-            values[column] = f"=IF(A{row_number}=\"\",\"\",A{row_number})"
+            values[column] = f'=IF(A{row_number}="","",A{row_number})'
         values.update((row_overrides or {}).get(row_number, {}))
         supplier.append([values[column] for column in EDCT_REQUIRED_COLUMNS])
 
@@ -347,7 +350,17 @@ class EdctWorkbookTests(unittest.TestCase):
                     run_edct_analysis(path, connection=connection)
 
         detached = edct_analysis.EdctRunResult(
-            1, Path("input.xlsx"), datetime.now(), datetime.now(), 0, object(), (), {}, Counter(), False, None
+            1,
+            Path("input.xlsx"),
+            datetime.now(),
+            datetime.now(),
+            0,
+            object(),
+            (),
+            {},
+            Counter(),
+            False,
+            None,
         )
         called = False
 
@@ -373,7 +386,9 @@ class EdctWorkbookTests(unittest.TestCase):
             '<item id="two"><value /></item></items>'
             '<tableParts><tablePart r:id="rIdNew" /></tableParts></worksheet>'
         ).encode()
-        source_custom = b'<root><item id="missing"><extLst><ext uri="custom" /></extLst></item></root>'
+        source_custom = (
+            b'<root><item id="missing"><extLst><ext uri="custom" /></extLst></item></root>'
+        )
         target_custom = b'<root><item id="different" /></root>'
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
@@ -382,7 +397,9 @@ class EdctWorkbookTests(unittest.TestCase):
             for path, content in ((source, source_xml), (target, target_xml)):
                 with ZipFile(path, "w", ZIP_DEFLATED) as archive:
                     archive.writestr("xl/worksheets/sheet1.xml", content)
-                    archive.writestr("custom.xml", source_custom if path == source else target_custom)
+                    archive.writestr(
+                        "custom.xml", source_custom if path == source else target_custom
+                    )
             edct_analysis._preserve_ooxml_extensions(
                 source, target, {"xl/worksheets/sheet1.xml", "custom.xml"}
             )
@@ -403,7 +420,7 @@ class EdctWorkbookTests(unittest.TestCase):
 
     def test_rule_documentation_lists_every_required_edct_column(self) -> None:
         documentation = (
-            Path(__file__).resolve().parents[2] / "docs" / "EDCT_VALIDATION_RULES.md"
+            Path(__file__).resolve().parents[2] / "docs" / "EDCT_QUALITY_CHECKER.md"
         ).read_text(encoding="utf-8")
         inventory = documentation.split("## Configured column inventory", 1)[1].split(
             "## Formula rules", 1
@@ -413,11 +430,11 @@ class EdctWorkbookTests(unittest.TestCase):
 
     def test_rule_documentation_matches_formula_and_unchecked_configuration(self) -> None:
         documentation = (
-            Path(__file__).resolve().parents[2] / "docs" / "EDCT_VALIDATION_RULES.md"
+            Path(__file__).resolve().parents[2] / "docs" / "EDCT_QUALITY_CHECKER.md"
         ).read_text(encoding="utf-8")
-        formula_section = documentation.split("## Formula rules", 1)[1].split(
-            "## Field rules", 1
-        )[0]
+        formula_section = documentation.split("## Formula rules", 1)[1].split("## Field rules", 1)[
+            0
+        ]
         unchecked_section = documentation.split("## Explicitly unchecked fields", 1)[1].split(
             "## Verified sample smoke", 1
         )[0]
@@ -440,12 +457,11 @@ class EdctWorkbookTests(unittest.TestCase):
         field_rules = documentation.split("## Field rules", 1)[1].split(
             "## Explicitly unchecked fields", 1
         )[0]
-        documented_rows = tuple(
-            line
-            for line in field_rules.splitlines()
-            if line.startswith("| `")
-        )
-        cells = lambda line: tuple(cell.strip() for cell in line.strip("|").split("|"))
+        documented_rows = tuple(line for line in field_rules.splitlines() if line.startswith("| `"))
+
+        def cells(line: str) -> tuple[str, ...]:
+            return tuple(cell.strip() for cell in line.strip("|").split("|"))
+
         self.assertEqual(
             tuple(map(cells, documented_rows)),
             tuple(map(cells, EDCT_RULE_CATALOGUE_ROWS)),
@@ -476,8 +492,12 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertIn("Check", headers)
             self.assertIn("Comment", headers)
             self.assertEqual(supplier.cell(3, headers.index("Check") + 1).value, 0)
-            self.assertEqual(supplier.cell(3, headers.index("Comment") + 1).value, "Quality check passed")
-            self.assertTrue(supplier.tables["Tabella2"].ref.endswith(get_column_letter(len(headers)) + "5"))
+            self.assertEqual(
+                supplier.cell(3, headers.index("Comment") + 1).value, "Quality check passed"
+            )
+            self.assertTrue(
+                supplier.tables["Tabella2"].ref.endswith(get_column_letter(len(headers)) + "5")
+            )
             self.assertRegex(output_path.name, r"input_eDCT_checked_\d{8}_\d{6}\.xlsx")
             self.assertEqual(load_workbook(input_path)["Other Sheet"]["A1"].value, "keep me")
             exported.close()
@@ -702,7 +722,9 @@ class EdctWorkbookTests(unittest.TestCase):
                 },
             )
             with closing(sqlite3.connect(":memory:")) as connection:
-                result = run_edct_analysis(path, connection=connection, analysis_date=date(2026, 7, 30))
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 30)
+                )
 
         self.assertEqual(result.row_results[3].check, 6)
         for column in (
@@ -1005,7 +1027,9 @@ class EdctWorkbookTests(unittest.TestCase):
             )
             with closing(sqlite3.connect(":memory:")) as connection:
                 connection.row_factory = sqlite3.Row
-                result = run_edct_analysis(path, connection=connection, analysis_date=date(2026, 7, 30))
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 30)
+                )
                 totals = connection.execute(
                     "SELECT column_name, fail_count FROM run_columns WHERE run_id = ?",
                     (result.run_id,),
@@ -1016,12 +1040,10 @@ class EdctWorkbookTests(unittest.TestCase):
             supplier = exported["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
             exported_checks = [
-                supplier.cell(row, headers.index("Check") + 1).value
-                for row in (3, 4)
+                supplier.cell(row, headers.index("Check") + 1).value for row in (3, 4)
             ]
             exported_comments = [
-                supplier.cell(row, headers.index("Comment") + 1).value
-                for row in (3, 4)
+                supplier.cell(row, headers.index("Comment") + 1).value for row in (3, 4)
             ]
             exported.close()
 
@@ -1057,7 +1079,9 @@ class EdctWorkbookTests(unittest.TestCase):
                 },
             )
             with closing(sqlite3.connect(":memory:")) as connection:
-                result = run_edct_analysis(path, connection=connection, analysis_date=date(2026, 7, 30))
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 30)
+                )
 
         self.assertEqual(result.row_results[3].check, 0)
         self.assertEqual(result.row_results[4].check, 1)
@@ -1120,7 +1144,9 @@ class EdctWorkbookTests(unittest.TestCase):
                 row_overrides={3: {"Starting date": None}},
             )
             with closing(sqlite3.connect(":memory:")) as connection:
-                result = run_edct_analysis(path, connection=connection, analysis_date=date(2026, 7, 30))
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 30)
+                )
 
         expected = (
             "Formula validation failed: formula reference row is missing "

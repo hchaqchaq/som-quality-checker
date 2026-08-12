@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -16,13 +15,16 @@ from openpyxl import Workbook
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
-
-from quality_checker.gui import app as gui_app
 from quality_checker.checkers.edct.runner import EdctRowResult
+from quality_checker.gui import app as gui_app
+from quality_checker.gui import screens, styles
 from quality_checker.gui.app import QualityCheckerController
-from quality_checker.gui.screens import AnalysisWorker, CheckableComboBox, MainWindow, ResponsiveColumns
-from quality_checker.gui import screens
-from quality_checker.gui import styles
+from quality_checker.gui.screens import (
+    AnalysisWorker,
+    CheckableComboBox,
+    MainWindow,
+    ResponsiveColumns,
+)
 
 
 class HistoryController(QualityCheckerController):
@@ -371,11 +373,19 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertEqual(page._distinct_column_values(frame, "Plant"), ["A", "b"])
         self.assertEqual(page._distinct_column_values(frame, "missing"), [])
 
-        with patch("quality_checker.gui.screens.QFileDialog.getOpenFileName", return_value=("input.xlsx", "")), patch.object(page, "_load_filter_values") as load:
+        with (
+            patch(
+                "quality_checker.gui.screens.QFileDialog.getOpenFileName",
+                return_value=("input.xlsx", ""),
+            ),
+            patch.object(page, "_load_filter_values") as load,
+        ):
             page._pick_input_file()
         self.assertEqual(page.input_file.text(), "input.xlsx")
         load.assert_called_once_with("input.xlsx")
-        with patch("quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/output"):
+        with patch(
+            "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/output"
+        ):
             page._pick_output_directory()
         self.assertEqual(page.output_dir.text(), "C:/output")
 
@@ -384,7 +394,9 @@ class ProjectNavigationTests(unittest.TestCase):
         page.filter_combos["Plant"]._toggle_item(page.filter_combos["Plant"].model().index(1, 0))
         filters = page._selected_scope_filters()
         self.assertEqual(filters[0].allowed_values, ("A",))
-        with patch("quality_checker.gui.screens.load_excel", side_effect=ValueError("bad workbook")):
+        with patch(
+            "quality_checker.gui.screens.load_excel", side_effect=ValueError("bad workbook")
+        ):
             page._load_filter_values("bad.xlsx")
         self.assertIn("could not be loaded", page.status.text())
 
@@ -413,9 +425,14 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertIn("Select an analysis run", history.columns_status.text())
 
         page = window.edct_page
-        with patch("quality_checker.gui.screens.QFileDialog.getOpenFileName", return_value=("edct.xlsx", "")):
+        with patch(
+            "quality_checker.gui.screens.QFileDialog.getOpenFileName",
+            return_value=("edct.xlsx", ""),
+        ):
             page._pick_input()
-        with patch("quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/out"):
+        with patch(
+            "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/out"
+        ):
             page._pick_output()
         self.assertEqual((page.input_file.text(), page.output_dir.text()), ("edct.xlsx", "C:/out"))
         page._finished(None, "", "boom")
@@ -511,6 +528,7 @@ class ProjectNavigationTests(unittest.TestCase):
     def test_edct_success_populates_preview_and_history(self) -> None:
         from collections import Counter
         from datetime import datetime
+
         from openpyxl import Workbook
 
         workbook = Workbook()

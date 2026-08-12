@@ -1,8 +1,13 @@
 {
-  "name": "som-quality-checker",
+  "name": "quality-checker",
   "private": true,
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "format": "prettier --write . --ignore-unknown && uv --project quality_checker run ruff check --fix main.py quality_checker/src quality_checker/tests && uv --project quality_checker run ruff format main.py quality_checker/src quality_checker/tests",
+    "lint": "prettier --check . --ignore-unknown && uv --project quality_checker run ruff format --check main.py quality_checker/src quality_checker/tests && uv --project quality_checker run ruff check main.py quality_checker/src quality_checker/tests",
+    "typecheck": "uv --project quality_checker run ty check main.py quality_checker/src/quality_checker/application.py quality_checker/src/quality_checker/checkers quality_checker/src/quality_checker/db quality_checker/src/quality_checker/smoke.py",
+    "test": "uv --project quality_checker run python -m unittest discover -s quality_checker/tests",
+    "check": "npm run lint && npm run typecheck && npm test"
   },
   "devDependencies": {
     "husky": "^9.1.7",

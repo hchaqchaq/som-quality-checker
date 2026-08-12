@@ -1,3 +1,7 @@
 {
-  "*": "prettier --ignore-unknown --write"
+  "*.py": [
+    "uv --project quality_checker run ruff check --fix",
+    "uv --project quality_checker run ruff format"
+  ],
+  "*.{css,html,js,json,md,toml,yaml,yml}": "prettier --ignore-unknown --write"
 }

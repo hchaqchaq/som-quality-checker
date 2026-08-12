@@ -32,4 +32,6 @@ show_missing = true
 [dependency-groups]
 dev = [
     "coverage>=7.15.3",
+    "ruff>=0.16.2",
+    "ty>=0.0.70",
 ]

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, cast
+from typing import cast
 
 from PyQt6.QtCore import QObject, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
@@ -11,12 +12,12 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QHeaderView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
-    QLineEdit,
     QLayout,
+    QLineEdit,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -30,13 +31,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .app import QualityCheckerController
-from ..checkers.edct.runner import EdctRunResult, export_edct_result, run_edct_analysis
+from ..application import APP_LOGO_PATH, PREVIEW_ROWS
 from ..checkers.edct.config import EDCT_INDEX_COLUMNS
+from ..checkers.edct.runner import EdctRunResult, export_edct_result, run_edct_analysis
+from ..checkers.som.config import ScopeFilterDefinition
 from ..checkers.som.loader import load_excel
 from ..checkers.som.runner import RunResult, export_result, run_analysis
-from ..application import APP_LOGO_PATH, PREVIEW_ROWS
-from ..checkers.som.config import ScopeFilterDefinition
+from .app import QualityCheckerController
 
 
 class CheckableComboBox(QComboBox):
@@ -88,11 +89,11 @@ class CheckableComboBox(QComboBox):
         return model.rowCount() > 0 and model.item(0).text() == "All"
 
     def _append_item(
-            self,
-            text: str,
-            value: str | None,
-            checked: bool,
-            checkable: bool = True,
+        self,
+        text: str,
+        value: str | None,
+        checked: bool,
+        checkable: bool = True,
     ) -> None:
         item = QStandardItem(text)
         flags = Qt.ItemFlag.ItemIsEnabled
@@ -109,7 +110,11 @@ class CheckableComboBox(QComboBox):
             return
 
         self._keep_popup_open = True
-        next_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+        next_state = (
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
         item.setCheckState(next_state)
         self._sync_all_item(item)
         self._update_display_text()
@@ -126,7 +131,10 @@ class CheckableComboBox(QComboBox):
             all_item.setCheckState(Qt.CheckState.Unchecked)
             return
 
-        any_checked = any(model.item(row).checkState() == Qt.CheckState.Checked for row in range(1, model.rowCount()))
+        any_checked = any(
+            model.item(row).checkState() == Qt.CheckState.Checked
+            for row in range(1, model.rowCount())
+        )
         if not any_checked:
             all_item.setCheckState(Qt.CheckState.Checked)
 
@@ -262,7 +270,9 @@ def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
 
     content_width = max(title_label.sizeHint().width(), menu.sizeHintForColumn(0) + 34, 142)
     menu.setFixedWidth(content_width)
-    sidebar.setFixedWidth(content_width + layout.contentsMargins().left() + layout.contentsMargins().right())
+    sidebar.setFixedWidth(
+        content_width + layout.contentsMargins().left() + layout.contentsMargins().right()
+    )
     return sidebar, menu, back_button
 
 
@@ -415,7 +425,9 @@ class EdctPage(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
+        input_card = _create_section_card(
+            "Workbook Selection", "Choose the source workbook and export folder."
+        )
         input_card_layout = cast(QVBoxLayout, input_card.layout())
 
         input_card_layout.addWidget(QLabel("Input workbook:"))
@@ -441,7 +453,9 @@ class EdctPage(QWidget):
         output_row.addWidget(self.output_dir)
         output_row.addWidget(self.pick_output_button)
         input_card_layout.addLayout(output_row)
-        analysis_card = _create_section_card("Analysis", "Assess the workbook and export an annotated copy.")
+        analysis_card = _create_section_card(
+            "Analysis", "Assess the workbook and export an annotated copy."
+        )
         analysis_layout = cast(QVBoxLayout, analysis_card.layout())
         self.run_button = QPushButton("Run Analysis")
         self.run_button.setObjectName("primaryButton")
@@ -463,7 +477,9 @@ class EdctPage(QWidget):
         self.workspace_columns = ResponsiveColumns(input_card, analysis_card)
         layout.addWidget(self.workspace_columns)
 
-        preview_card = _create_section_card("Preview", "First rows from the latest analysis workbook.")
+        preview_card = _create_section_card(
+            "Preview", "First rows from the latest analysis workbook."
+        )
         preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_layout = cast(QVBoxLayout, preview_card.layout())
         self.preview_empty = QLabel("Preview rows will appear here after an analysis run.")
@@ -571,9 +587,7 @@ class EdctPage(QWidget):
     def _fill_preview(self, result: EdctRunResult) -> None:
         worksheet = result.workbook["Supplier Level"]
         headers = {
-            str(cell.value).strip(): cell.column
-            for cell in worksheet[2]
-            if cell.value is not None
+            str(cell.value).strip(): cell.column for cell in worksheet[2] if cell.value is not None
         }
         index_header = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
         rows = result.assessed_rows[:PREVIEW_ROWS]
@@ -647,7 +661,9 @@ class MainWindow(QMainWindow):
         self.project_page.edct_button.clicked.connect(self._show_edct)
         self.edct_menu.currentRowChanged.connect(self._on_edct_menu_changed)
         self.edct_menu.setCurrentRow(0)
-        self.edct_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
+        self.edct_back_button.clicked.connect(
+            lambda: self.pages.setCurrentWidget(self.project_page)
+        )
         self.som_back_button.clicked.connect(lambda: self.pages.setCurrentWidget(self.project_page))
         self.pages.setCurrentWidget(self.project_page)
 
@@ -689,7 +705,9 @@ class WelcomePage(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        input_card = _create_section_card("Workbook Selection", "Choose the source workbook and export folder.")
+        input_card = _create_section_card(
+            "Workbook Selection", "Choose the source workbook and export folder."
+        )
         input_card_layout = cast(QVBoxLayout, input_card.layout())
 
         input_card_layout.addWidget(QLabel("Input workbook:"))
@@ -735,11 +753,11 @@ class WelcomePage(QWidget):
         }
 
         for column_index, (label, combo) in enumerate(
-                (
-                        ("Plant", self.plant_filter),
-                        ("Contacted", self.contacted_filter),
-                        ("Info completed", self.info_completed_filter),
-                )
+            (
+                ("Plant", self.plant_filter),
+                ("Contacted", self.contacted_filter),
+                ("Info completed", self.info_completed_filter),
+            )
         ):
             label_widget = QLabel(label)
             filters_grid.addWidget(label_widget, 0, column_index)
@@ -754,7 +772,9 @@ class WelcomePage(QWidget):
         setup_layout.addWidget(input_card)
         setup_layout.addWidget(filters_card)
 
-        run_card = _create_section_card("Analysis", "Assess the selected rows and export an analysis workbook.")
+        run_card = _create_section_card(
+            "Analysis", "Assess the selected rows and export an analysis workbook."
+        )
         run_layout = cast(QVBoxLayout, run_card.layout())
         self.run_button = QPushButton("Run Analysis")
         self.run_button.setObjectName("primaryButton")
@@ -777,13 +797,17 @@ class WelcomePage(QWidget):
         run_layout.addWidget(QLabel("Exported workbook:"))
         self.result_path_value = QLineEdit("")
         self.result_path_value.setReadOnly(True)
-        self.result_path_value.setPlaceholderText("The exported workbook path will appear here after a run")
+        self.result_path_value.setPlaceholderText(
+            "The exported workbook path will appear here after a run"
+        )
         run_layout.addWidget(self.result_path_value)
 
         self.workspace_columns = ResponsiveColumns(setup, run_card)
         layout.addWidget(self.workspace_columns)
 
-        preview_card = _create_section_card("Preview", "First five rows from the latest output workbook.")
+        preview_card = _create_section_card(
+            "Preview", "First five rows from the latest output workbook."
+        )
         preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_card_layout = cast(QVBoxLayout, preview_card.layout())
         self.preview_empty = QLabel("Preview rows will appear here after an analysis run.")
@@ -837,7 +861,11 @@ class WelcomePage(QWidget):
         selected_file, _ = QFileDialog.getOpenFileName(
             self,
             "Choose input workbook",
-            str(Path(self.input_file.text().strip()).parent if self.input_file.text().strip() else Path.home()),
+            str(
+                Path(self.input_file.text().strip()).parent
+                if self.input_file.text().strip()
+                else Path.home()
+            ),
             "Excel files (*.xlsx *.xls *.xlsm)",
         )
         if selected_file:
@@ -874,7 +902,9 @@ class WelcomePage(QWidget):
             dataframe = load_excel(input_path)
         except Exception as exc:
             self._reset_filter_values(f"Unable to load filters: {exc}")
-            self._set_status(f"Selected input file, but filters could not be loaded: {exc}", level="warning")
+            self._set_status(
+                f"Selected input file, but filters could not be loaded: {exc}", level="warning"
+            )
             return
 
         for column in self.filter_columns:
@@ -930,9 +960,7 @@ class WelcomePage(QWidget):
         # Run heavy Excel + pandas work off the UI thread to avoid freezing.
         self._run_thread = QThread(self)
         scope_filters = self._selected_scope_filters()
-        self._run_worker = AnalysisWorker(
-            lambda: _run_som(input_path, output_path, scope_filters)
-        )
+        self._run_worker = AnalysisWorker(lambda: _run_som(input_path, output_path, scope_filters))
         self._run_worker.moveToThread(self._run_thread)
 
         self._run_thread.started.connect(self._run_worker.run)
@@ -981,7 +1009,12 @@ class WelcomePage(QWidget):
 
 
 class HistoryPage(QWidget):
-    def __init__(self, controller: QualityCheckerController, project: str = "SOM", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        controller: QualityCheckerController,
+        project: str = "SOM",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.project = project
@@ -999,7 +1032,9 @@ class HistoryPage(QWidget):
         layout.addWidget(heading)
         layout.addWidget(description)
 
-        runs_panel = _create_section_card("Stored runs", "Select one row to inspect its recorded totals.")
+        runs_panel = _create_section_card(
+            "Stored runs", "Select one row to inspect its recorded totals."
+        )
         runs_layout = cast(QVBoxLayout, runs_panel.layout())
         self.refresh_button = QPushButton("Refresh")
         runs_layout.addWidget(self.refresh_button)
@@ -1114,7 +1149,9 @@ class HistoryPage(QWidget):
         self.delete_button.setEnabled(run_id is not None)
         if run_id is None:
             self.columns_table.setRowCount(0)
-            self.columns_status.setText("Select an analysis run to inspect validation failure totals.")
+            self.columns_status.setText(
+                "Select an analysis run to inspect validation failure totals."
+            )
             return
         rows = self.controller.history_columns(run_id)
         self._fill_columns(rows)

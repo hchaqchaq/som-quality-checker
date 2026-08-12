@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from pathlib import Path
 import re
+import sqlite3
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
-import sqlite3
 
-from .loader import load_excel
-from .validator import RuleResult, build_default_rules, build_scope_mask, normalize
-from .config import SCOPE_FILTERS, TEXT_COLUMNS, ScopeFilterDefinition
 from ...application import DB_PATH
 from ...db.repository import (
     ColumnRecord,
@@ -21,6 +18,9 @@ from ...db.repository import (
     open_connection,
     update_run_exported_file,
 )
+from .config import SCOPE_FILTERS, TEXT_COLUMNS, ScopeFilterDefinition
+from .loader import load_excel
+from .validator import RuleResult, build_default_rules, build_scope_mask, normalize
 
 
 @dataclass(slots=True)
@@ -45,7 +45,7 @@ def run_analysis(
 ) -> RunResult:
     resolved_input = Path(input_path)
     started_perf = perf_counter()
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
 
     source_df = load_excel(resolved_input)
     source_df = source_df.copy()
@@ -63,7 +63,10 @@ def run_analysis(
 
     rule_results = [rule.evaluate(df_filtered) for rule in build_default_rules(analysis_date)]
 
-    total_check = sum(result.fail_counts for result in rule_results)
+    total_check = sum(
+        (result.fail_counts for result in rule_results),
+        start=pd.Series(0, index=df_filtered.index, dtype="int64"),
+    )
     df_filtered["Check"] = total_check.astype(int)
 
     def build_comment(index) -> str:
@@ -79,7 +82,7 @@ def run_analysis(
 
     final_df = pd.concat([df_filtered, df_rest], ignore_index=True)
 
-    finished_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(UTC)
     duration_s = perf_counter() - started_perf
 
     own_connection = connection is None
@@ -107,7 +110,11 @@ def run_analysis(
         for result in rule_results:
             for column_name, fail_count in result.column_fail_counts.items():
                 column_records.append(
-                    ColumnRecord(rule_name=result.rule_name, column_name=column_name, fail_count=int(fail_count))
+                    ColumnRecord(
+                        rule_name=result.rule_name,
+                        column_name=column_name,
+                        fail_count=int(fail_count),
+                    )
                 )
 
         run_id = insert_run(connection, run_record, column_records)
@@ -151,6 +158,3 @@ def _build_export_target(input_file: Path, output_path: Path | str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", input_file.stem).strip("._") or "analysis"
     return output_dir / f"{safe_stem}_{timestamp}.xlsx"
-
-
-

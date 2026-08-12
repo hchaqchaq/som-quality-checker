@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 import importlib.util
 import os
+import re
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -12,12 +13,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-
+from quality_checker.checkers.som import validator
+from quality_checker.checkers.som.config import TEXT_COLUMNS, WANTED_COLUMNS, ScopeFilterDefinition
 from quality_checker.checkers.som.loader import LoadError, load_excel
 from quality_checker.checkers.som.runner import _build_export_target, export_result, run_analysis
-from quality_checker.checkers.som import validator
 from quality_checker.checkers.som.validator import build_default_rules, normalize
-from quality_checker.checkers.som.config import ScopeFilterDefinition, TEXT_COLUMNS, WANTED_COLUMNS
+from quality_checker.db import repository
 from quality_checker.db.repository import (
     ColumnRecord,
     RunRecord,
@@ -30,8 +31,6 @@ from quality_checker.db.repository import (
     update_run_exported_file,
     update_run_status,
 )
-from quality_checker.db import repository
-
 
 AS_OF = date(2026, 7, 15)
 
@@ -104,6 +103,24 @@ class RuleTests(unittest.TestCase):
             ],
         )
 
+    def test_som_rule_documentation_matches_configuration(self) -> None:
+        documentation = (
+            Path(__file__).resolve().parents[2] / "docs" / "SOM_QUALITY_CHECKER.md"
+        ).read_text(encoding="utf-8")
+        inventory = documentation.split("## Configured column inventory", 1)[1].split(
+            "## Validation rules", 1
+        )[0]
+        rules = documentation.split("## Validation rules", 1)[1].split("## Rule details", 1)[0]
+
+        self.assertEqual(
+            set(re.findall(r"^- `([^`]+)`$", inventory, re.MULTILINE)),
+            set(WANTED_COLUMNS),
+        )
+        self.assertEqual(
+            re.findall(r"^\|\s+`([^`]+)`\s+\|", rules, re.MULTILINE),
+            [rule.rule_name for rule in build_default_rules(AS_OF)],
+        )
+
     def test_completed_status_requires_completed_info(self) -> None:
         result = results(
             [row(**{"Info completed": " complete "}), row(**{"Info completed": "No"})]
@@ -169,11 +186,17 @@ class RuleTests(unittest.TestCase):
             ]
         )["cofor_format"]
         self.assertEqual(result.fail_counts.tolist(), [1, 0, 0, 0])
-        self.assertEqual(result.row_messages.iloc[0], "COFOR PATTERN (6 CHARS + 2 SPACES + 2 CHARS)")
+        self.assertEqual(
+            result.row_messages.iloc[0], "COFOR PATTERN (6 CHARS + 2 SPACES + 2 CHARS)"
+        )
 
     def test_contact_columns_require_one_email_each(self) -> None:
         quality = results(
-            [row(), row(**{"Quality contact": ""}), row(**{"Quality contact": "Name <a@example.com>"})]
+            [
+                row(),
+                row(**{"Quality contact": ""}),
+                row(**{"Quality contact": "Name <a@example.com>"}),
+            ]
         )["quality_contact_email"]
         logistic = results([row(), row(**{"Logistic contact": "a@example.com;b@example.com"})])[
             "logistic_contact_email"
@@ -182,9 +205,9 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(logistic.fail_counts.tolist(), [0, 1])
 
     def test_status_requires_yes_contacted(self) -> None:
-        result = results([row(Contacted="yes"), row(Contacted="NO"), row(Status="", Contacted="NO")])[
-            "contacted_when_status_filled"
-        ]
+        result = results(
+            [row(Contacted="yes"), row(Contacted="NO"), row(Status="", Contacted="NO")]
+        )["contacted_when_status_filled"]
         self.assertEqual(result.fail_counts.tolist(), [0, 1, 0])
 
     def test_note_requires_real_strict_date(self) -> None:
@@ -235,8 +258,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(len(result.in_scope_df), 2)
         self.assertEqual(result.in_scope_df["Check"].tolist(), [0, 3])
         self.assertEqual(result.in_scope_df["Comment"].iloc[0], "Quality check passed")
-        self.assertIn("INVALID OR MISSING EMAIL: Quality contact", result.in_scope_df["Comment"].iloc[1])
-        self.assertIn("CONTACTED MUST BE YES WHEN STATUS IS FILLED", result.in_scope_df["Comment"].iloc[1])
+        self.assertIn(
+            "INVALID OR MISSING EMAIL: Quality contact", result.in_scope_df["Comment"].iloc[1]
+        )
+        self.assertIn(
+            "CONTACTED MUST BE YES WHEN STATUS IS FILLED", result.in_scope_df["Comment"].iloc[1]
+        )
         self.assertIn("NOTE DATE MUST USE DD/MM/YYYY", result.in_scope_df["Comment"].iloc[1])
 
     def test_completion_date_is_required_by_loader(self) -> None:
@@ -297,8 +324,12 @@ class IntegrationTests(unittest.TestCase):
                 [],
             )
 
-            self.assertEqual([run["input_file"] for run in list_runs(connection, "SOM")], ["som.xlsx"])
-            self.assertEqual([run["input_file"] for run in list_runs(connection, "eDCT")], ["edct.xlsx"])
+            self.assertEqual(
+                [run["input_file"] for run in list_runs(connection, "SOM")], ["som.xlsx"]
+            )
+            self.assertEqual(
+                [run["input_file"] for run in list_runs(connection, "eDCT")], ["edct.xlsx"]
+            )
 
     def test_repository_run_lifecycle_and_nullable_export_migration(self) -> None:
         with closing(sqlite3.connect(":memory:")) as connection:
@@ -322,7 +353,9 @@ class IntegrationTests(unittest.TestCase):
                 """
             )
             initialize_schema(connection)
-            self.assertEqual(connection.execute("SELECT exported_file FROM runs").fetchone()[0], "old.xlsx")
+            self.assertEqual(
+                connection.execute("SELECT exported_file FROM runs").fetchone()[0], "old.xlsx"
+            )
             self.assertEqual(get_run_columns(connection, 1)[0]["fail_count"], 1)
 
             run_id = insert_run(
@@ -337,7 +370,9 @@ class IntegrationTests(unittest.TestCase):
                 (newest["exported_file"], newest["status"], newest["error_message"]),
                 ("export.xlsx", "failed", "boom"),
             )
-            self.assertEqual(get_run_columns(connection, run_id)[0]["column_name"], "Logistic contact")
+            self.assertEqual(
+                get_run_columns(connection, run_id)[0]["column_name"], "Logistic contact"
+            )
             delete_run(connection, run_id)
             self.assertEqual(list_runs(connection, limit=1)[0]["id"], 1)
 
@@ -369,7 +404,9 @@ class IntegrationTests(unittest.TestCase):
         with closing(sqlite3.connect(":memory:")) as connection:
             connection.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY)")
             repository._migrate_runs_exported_file_nullable(connection)
-            self.assertIn("exported_file", {row[1] for row in connection.execute("PRAGMA table_info(runs)")})
+            self.assertIn(
+                "exported_file", {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+            )
 
         with closing(sqlite3.connect(":memory:")) as connection:
             connection.execute(
@@ -405,7 +442,11 @@ class IntegrationTests(unittest.TestCase):
         config_path = Path(validator.__file__).parents[2] / "application.py"
         spec = importlib.util.spec_from_file_location("frozen_config_for_test", config_path)
         module = importlib.util.module_from_spec(spec)
-        with patch.object(sys, "frozen", True, create=True), patch.dict(os.environ, {"LOCALAPPDATA": "C:/Local"}), patch.dict(sys.modules, {"frozen_config_for_test": module}):
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.dict(os.environ, {"LOCALAPPDATA": "C:/Local"}),
+            patch.dict(sys.modules, {"frozen_config_for_test": module}),
+        ):
             assert spec.loader is not None
             spec.loader.exec_module(module)
         self.assertEqual(module.DATA_DIR, Path("C:/Local") / "Quality Checker")

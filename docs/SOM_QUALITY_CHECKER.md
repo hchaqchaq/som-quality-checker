@@ -1,234 +1,91 @@
-# SOM Quality Checker
+# SOM Validation Rules
 
-## Purpose
+The runtime source of truth is `quality_checker/src/quality_checker/checkers/som/config.py` and `validator.py`. This document describes only rules currently executed by the application.
 
-SOM Quality Checker is a desktop application that analyzes the first worksheet of an Excel workbook, applies validation rules to selected rows, exports an annotated analysis workbook, and stores execution history in SQLite.
+## Workbook boundary
 
-The checker reports data-quality problems. It does not silently repair or rewrite source values.
+- The checker reads the first worksheet with pandas.
+- Every configured column listed below is required before validation starts.
+- `Check` and `Comment` are analysis result columns and are added or replaced.
+- Scope filters are applied before rules execute; rules evaluate assessed rows only.
 
-## User workflow
+## Result
 
-1. Select an input Excel workbook.
-2. Select an output folder.
-3. Optionally filter rows by `Plant`, `Contacted`, and `Info completed`.
-4. Run the analysis.
-5. Review the preview and status summary.
-6. Open the exported analysis workbook.
-7. Review previous runs and rule totals in History.
+Each failed condition adds one to `Check`. Each SOM rule can add at most one failure to a row. `Comment` joins rule messages with `|`. A row without failures receives `Check = 0` and `Quality check passed`.
 
-Selecting `All` means that field does not restrict the analysis scope. With no explicit filters, all rows are assessed.
+Rows excluded by scope filters receive `Check = Out of filters` and `Comment = Out of filters`. Assessed rows are exported before excluded rows.
 
-## Result semantics
+## Configured column inventory
 
-An assessed row with no failures:
-
-```text
-Check: 0
-Comment: Quality check passed
-```
-
-A row excluded by the filters:
-
-```text
-Check: Not assessed
-Comment: Not assessed
-```
-
-A row with several failures:
-
-```text
-Check: 4
-Comment: Missing required value: Quality contact, Seller COFOR2 | Invalid email: Logistic contact | Invalid COFOR pattern: Manufacturer COFOR
-```
-
-`Check` is the total number of validation failures. Field-level rules contribute one per failing field; row-level consistency rules contribute one per failed condition.
-
-`Comment` groups fields with the same failure reason. Different reasons are separated with ` | `. Missing values and malformed values are reported separately.
-
-## Required columns
-
-The first worksheet must contain:
-
-- `Seller COFOR2`
 - `Manufacturer COFOR`
 - `Manufacturer address`
 - `Shipper COFOR2`
 - `Shipper COFOR Address`
-- `Location ID2`
-- `Location ID Address`
 - `Quality contact`
 - `Logistic contact`
 - `Contacted`
 - `Info completed`
 - `NOTE`
-- `Owner`
 - `Format check`
 - `Status`
-- `SOM double-check`
+- `Completion date`
 - `Plant`
 
-If any required column is absent, the whole analysis stops and the error lists every missing column.
+`Completion date` retains its loaded value type. All other configured columns are cast to pandas string values and stripped before evaluation.
 
 ## Validation rules
 
+| Rule                           | Tracked column          | Applies when                                                         | Accepted condition                                                                                                                         | Failure comment                                                                                               |
+| ------------------------------ | ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `status_completed`             | `Info completed`        | `Status` is `Complete` or `Completed`                                | `Info completed` is `Complete` or `Completed`                                                                                              | `INFO COMPLETED MUST BE COMPLETED`                                                                            |
+| `completion_date`              | `Completion date`       | `Status` and `Info completed` are complete and `Contacted = Yes`     | A native date/datetime value or text in `DD/MM/YYYY` format                                                                                | `COMPLETION DATE IS MISSING` or `COMPLETION DATE IS INVALID`                                                  |
+| `relance`                      | `NOTE`                  | `Info completed` is empty and `Contacted = Yes`                      | `NOTE` contains at least one valid `DD/MM/YYYY` date; its latest valid date is between the analysis date and three days earlier, inclusive | `RELANCE DATE IS MISSING OR INVALID`, `RELANCE DATE IS IN THE FUTURE`, or `RELANCE DATE IS OLDER THAN 3 DAYS` |
+| `shipper_cofor_address`        | `Shipper COFOR Address` | Non-empty `Shipper COFOR2` and address participate in comparison     | Every row with the same normalized `Shipper COFOR2` has the same normalized non-empty address                                              | `SHIPPER COFOR <value> HAS MULTIPLE ADDRESSES`                                                                |
+| `manufacturer_cofor_address`   | `Manufacturer address`  | Non-empty `Manufacturer COFOR` and address participate in comparison | Every row with the same normalized `Manufacturer COFOR` has the same normalized non-empty address                                          | `MANUFACTURER COFOR <value> HAS MULTIPLE ADDRESSES`                                                           |
+| `cofor_format`                 | `Format check`          | `Contacted = Yes` and `Info completed` is complete                   | `Format check` is not `NOK`                                                                                                                | `COFOR PATTERN (6 CHARS + 2 SPACES + 2 CHARS)`                                                                |
+| `quality_contact_email`        | `Quality contact`       | Always                                                               | Exactly one non-empty email matching the configured email pattern                                                                          | `INVALID OR MISSING EMAIL: Quality contact`                                                                   |
+| `logistic_contact_email`       | `Logistic contact`      | Always                                                               | Exactly one non-empty email matching the configured email pattern                                                                          | `INVALID OR MISSING EMAIL: Logistic contact`                                                                  |
+| `contacted_when_status_filled` | `Contacted`             | `Status` is non-empty                                                | `Contacted = Yes`                                                                                                                          | `CONTACTED MUST BE YES WHEN STATUS IS FILLED`                                                                 |
+| `note_date_format`             | `NOTE`                  | Always                                                               | At least one date-like token exists and every detected token is a real `DD/MM/YYYY` date                                                   | `NOTE DATE MUST USE DD/MM/YYYY`                                                                               |
+
+Text choices trim surrounding whitespace and ignore case where stated. The configured email pattern accepts ASCII letters, digits, `.`, `_`, `%`, `+`, and `-` in the local part and requires a dotted alphabetic domain suffix of at least two characters.
+
+## Rule details
+
+### Completion date
+
+The rule accepts Python `date`, Python `datetime`, and non-missing pandas `Timestamp` values. Text dates accept only `DD/MM/YYYY`. It does not reject future completion dates.
+
+### Relance date
+
+The analysis date defaults to the day the run starts. Tests and direct callers may provide another analysis date. The three-day window is inclusive. When `NOTE` contains multiple valid dates, only the latest date determines freshness.
+
+### COFOR/address consistency
+
+COFOR keys and addresses are normalized by trimming, collapsing internal whitespace, and ignoring case. Rows with an empty COFOR or empty address do not participate. Every participating row associated with a conflicting COFOR receives one failure.
+
+The checker does not independently parse the COFOR text. The `cofor_format` rule trusts the workbook's `Format check` value and fails only when that value is `NOK` under its activation condition.
+
 ### Email fields
 
-`Quality contact` and `Logistic contact` are required values. Empty values fail. Populated values must contain valid email addresses.
+Both contact fields are required on every assessed row. Each field must contain exactly one email address. Lists separated by commas, semicolons, slashes, spaces, or newlines are not supported by the implemented SOM rule.
 
-Multiple addresses may be separated by commas, semicolons, slashes, newlines, or supported spacing. Each failing field contributes one to `Check`.
+### NOTE format
 
-### COFOR fields
-
-`Seller COFOR2`, `Manufacturer COFOR`, and `Shipper COFOR2` are required values. Each must contain six alphanumeric characters, two spaces, and two alphanumeric characters.
-
-Each empty or malformed field contributes one failure.
-
-### Location ID
-
-`Location ID2` is required and must contain exactly 12 characters after surrounding whitespace is ignored.
-
-### Contacted
-
-When a row is assessed, `Contacted` must contain one of these case-insensitive values:
-
-- `yes`
-- `no`
-- `out of scope`
-
-An empty or unsupported value contributes one failure.
-
-### Location fields
-
-These fields are required:
-
-- `Manufacturer address`
-- `Shipper COFOR Address`
-- `Location ID Address`
-
-A populated value must contain a recognized location signal such as a postal code, street number, city/country pattern, or supported street-type keyword. Each empty or invalid field contributes one failure.
-
-### Excel error tokens
-
-The following fields are checked for Excel error tokens:
-
-- `Info completed`
-- `Format check`
-- `Owner`
-
-Detected tokens include `#N/A`, `#REF!`, `#VALUE!`, `#DIV/0!`, `#NAME?`, `#NULL!`, `#NUM!`, and `#GETTING_DATA`.
-
-Empty values do not fail this rule. `Format check` and `Owner` remain optional, and `Info completed` has no separate general required-value rule.
-
-### Status consistency
-
-When `Status` is `Complete`, an empty `Info completed` value contributes one failure:
-
-```text
-Missing required value: Info completed is empty while Status is "Complete"
-```
-
-### Manufacturer consistency
-
-Rows sharing a non-empty `Manufacturer COFOR` must not contain conflicting non-empty `Manufacturer address` values.
-
-Each affected row receives one additional failure:
-
-```text
-Conflicting Manufacturer address: Manufacturer COFOR "ABC123  45" is linked to multiple addresses
-```
-
-### Shipper consistency
-
-Rows sharing a non-empty `Shipper COFOR2` must not contain conflicting non-empty `Shipper COFOR Address` values.
-
-Each affected row receives one additional failure:
-
-```text
-Conflicting Shipper COFOR Address: Shipper COFOR2 "XYZ789  12" is linked to multiple addresses
-```
+The rule detects date-like tokens containing one- to four-digit year/day groups separated by `.`, `/`, or `-`. Every detected token must be a valid `DD/MM/YYYY` date. A note without any date-like token fails.
 
 ## Filtering
 
-Filters determine whether a row is assessed; they do not change validation rules.
+The GUI can provide filters for `Plant`, `Contacted`, and `Info completed`.
 
-- `All` means no restriction for that field.
-- No explicit filters means all rows are assessed.
-- `Contacted` matching is case-insensitive.
-- Other filter values are trimmed before comparison.
-- Excluded rows receive `Not assessed`.
-- Desktop, package, and smoke-test entry points use the same default scope semantics.
+- Selecting all values for a field omits that filter.
+- Filtered text is stripped before comparison.
+- The GUI configures `Contacted` and `Info completed` comparisons without case folding.
+- With no active filters, every loaded row is assessed.
+- Filtering changes analysis scope; it does not change rule behavior.
 
-## Export
+## Export and history
 
-The analysis workbook:
+The export is a new `.xlsx` workbook produced from the pandas result. It contains the configured source columns plus `Check` and `Comment`. It does not preserve the source workbook's formulas, formatting, macros, metadata, additional worksheets, or original interleaving of assessed and excluded rows.
 
-- Preserves the original row order.
-- Preserves original source values.
-- Adds or replaces `Check` and `Comment`.
-- Includes assessed and not-assessed rows.
-- Uses normalized copies only while evaluating rules.
-- Is written as a new `.xlsx` workbook.
-
-It does not guarantee preservation of source formatting, formulas, merged cells, macros, workbook metadata, or additional worksheet behavior. Only the first worksheet is analyzed.
-
-## Run history
-
-History records validation independently from export. A successful analysis means validation completed; it does not guarantee that export succeeded.
-
-History stores:
-
-- Start and finish timestamps
-- Duration
-- Input file
-- Exported file when available
-- Total rows
-- Assessed rows
-- Failed rows
-- Status
-- Error message when applicable
-- Failure totals by rule and field
-
-Failed attempts are retained with `status = failed` and their error message.
-
-`rows_failed` is the number of assessed rows having at least one failure, not the total failure count.
-
-Deleting a run removes only its SQLite history metadata and related rule totals. It never deletes input or exported workbooks.
-
-## Processing flow
-
-```text
-Select workbook
-    ↓
-Read first worksheet
-    ↓
-Verify required columns
-    ↓
-Create validation-normalized copy
-    ↓
-Apply explicit scope filters
-    ↓
-Evaluate rules on assessed rows
-    ↓
-Aggregate Check and Comment
-    ↓
-Mark excluded rows as Not assessed
-    ↓
-Restore original row order and values
-    ↓
-Record analysis history
-    ↓
-Export analysis workbook
-```
-
-## Current implementation gaps
-
-The current code does not yet implement every documented rule:
-
-- Empty email, COFOR, location ID, location, and `Contacted` values currently pass.
-- Excluded rows currently say `Out of filters`.
-- Export groups assessed rows before excluded rows.
-- Export uses normalized values instead of preserving originals.
-- CLI execution uses hidden default filters.
-- Consistency comments omit the conflicting COFOR value.
-- Failed analysis attempts are not recorded.
-- Comments do not yet distinguish missing values from malformed values.
+Run history records one total for every rule and tracked column pair shown in the validation table, including zero-failure totals. It also records total rows, assessed rows, failed rows, timing, input path, export path when available, status, and an error message when supplied.

@@ -4,6 +4,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import cast
 
 import pandas as pd
 
@@ -34,7 +35,9 @@ class ValidationRule(ABC):
 
 class StatusCompletedRule(ValidationRule):
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        fail_series = dataframe["Status"].apply(is_completed) & ~dataframe["Info completed"].apply(is_completed)
+        fail_series = dataframe["Status"].apply(is_completed) & ~dataframe["Info completed"].apply(
+            is_completed
+        )
         message = "INFO COMPLETED MUST BE COMPLETED"
         return _build_result(self.rule_name, fail_series, message, "Info completed")
 
@@ -63,7 +66,9 @@ class RelanceRule(ValidationRule):
         self.reference_date = reference_date
 
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        condition = dataframe["Info completed"].apply(is_empty_value) & dataframe["Contacted"].apply(is_yes)
+        condition = dataframe["Info completed"].apply(is_empty_value) & dataframe[
+            "Contacted"
+        ].apply(is_yes)
         messages = pd.Series("", index=dataframe.index, dtype="string")
         oldest_allowed = self.reference_date - timedelta(days=3)
         for index in dataframe.index[condition]:
@@ -98,7 +103,10 @@ class CoforAddressRule(ValidationRule):
         normalized_addresses = dataframe[self.address_column].apply(normalize_key)
         participating = normalized_cofors.ne("") & normalized_addresses.ne("")
         grouped = pd.DataFrame(
-            {"cofor": normalized_cofors[participating], "address": normalized_addresses[participating]}
+            {
+                "cofor": normalized_cofors[participating],
+                "address": normalized_addresses[participating],
+            }
         )
         conflicting_cofors = set(
             grouped.groupby("cofor")["address"].nunique().loc[lambda values: values > 1].index
@@ -113,8 +121,12 @@ class CoforAddressRule(ValidationRule):
 
 class CoforFormatRule(ValidationRule):
     def evaluate(self, dataframe: pd.DataFrame) -> RuleResult:
-        condition = dataframe["Contacted"].apply(is_yes) & dataframe["Info completed"].apply(is_completed)
-        fail_series = condition & dataframe["Format check"].apply(normalized_text).str.casefold().eq("nok")
+        condition = dataframe["Contacted"].apply(is_yes) & dataframe["Info completed"].apply(
+            is_completed
+        )
+        fail_series = condition & dataframe["Format check"].apply(
+            normalized_text
+        ).str.casefold().eq("nok")
         return _build_result(
             self.rule_name,
             fail_series,
@@ -165,9 +177,12 @@ def _build_result(
 ) -> RuleResult:
     failures = fail_series.astype(int)
     if isinstance(messages, str):
-        row_messages = fail_series.apply(lambda failed: messages if bool(failed) else "").astype("string")
+        row_messages = cast(
+            pd.Series,
+            fail_series.apply(lambda failed: messages if bool(failed) else "").astype("string"),
+        )
     else:
-        row_messages = messages.astype("string")
+        row_messages = cast(pd.Series, messages.astype("string"))
     return RuleResult(
         rule_name=rule_name,
         fail_counts=failures,
@@ -284,7 +299,9 @@ def build_default_rules(reference_date: date | None = None) -> list[ValidationRu
     ]
 
 
-def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefinition, ...]) -> pd.Series:
+def build_scope_mask(
+    dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefinition, ...]
+) -> pd.Series:
     mask = pd.Series(True, index=dataframe.index)
     for filter_definition in filters:
         series = dataframe[filter_definition.column]
@@ -292,7 +309,9 @@ def build_scope_mask(dataframe: pd.DataFrame, filters: tuple[ScopeFilterDefiniti
             series = series.astype("string").str.strip()
         if filter_definition.casefold:
             series = series.str.casefold()
-            allowed_values = {value.strip().casefold() for value in filter_definition.allowed_values}
+            allowed_values = {
+                value.strip().casefold() for value in filter_definition.allowed_values
+            }
         else:
             allowed_values = set(filter_definition.allowed_values)
         mask &= series.isin(allowed_values)

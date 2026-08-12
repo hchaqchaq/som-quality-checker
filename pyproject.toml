@@ -1,7 +1,7 @@
 [project]
-name = "som-quality-checker"
+name = "quality-checker-workspace"
 version = "0.1.0"
-description = "Add your description here"
+description = "Desktop quality checker for SOM and eDCT workbooks"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

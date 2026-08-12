@@ -6,13 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$AppName = "SOM Quality Checker"
+$AppName = "Quality Checker"
 $EntryPoint = Join-Path $ProjectRoot "main.py"
 $LogoPath = Join-Path $ProjectRoot "logo.png"
 $DistPath = Join-Path $ProjectRoot "dist"
 $BuildPath = Join-Path $ProjectRoot "build"
 $SpecPath = Join-Path $ProjectRoot "$AppName.spec"
-$PackagePath = Join-Path $ProjectRoot "som_analyzer\src"
+$PackagePath = Join-Path $ProjectRoot "quality_checker\src"
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue))
 {
@@ -60,8 +60,8 @@ $Arguments = @(
     "--windowed",
     "--name", $AppName,
     "--paths", $PackagePath,
-    "--collect-submodules", "som_analyzer",
-    "--hidden-import", "som_analyzer.gui.app",
+    "--collect-submodules", "quality_checker",
+    "--hidden-import", "quality_checker.gui.app",
     "--add-data", $AddData,
     "--icon", $LogoPath,
     $EntryPoint

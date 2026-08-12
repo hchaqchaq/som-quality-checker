@@ -1,1 +1,0 @@
-"""PyQt desktop app modules."""

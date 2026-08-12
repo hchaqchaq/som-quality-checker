@@ -1,6 +1,6 @@
-# SOM and eDCT Quality Checker
+# Quality Checker
 
-This repository includes one desktop application with separate SOM and eDCT workbook-quality projects.
+This repository includes one desktop application with separate SOM and eDCT workbook checker modules.
 
 ## Run the PyQt app
 
@@ -20,16 +20,16 @@ See [eDCT validation rules](docs/EDCT_VALIDATION_RULES.md) for the complete eDCT
 ## Package-local workflow
 
 ```powershell
-Push-Location som_analyzer
+Push-Location quality_checker
 uv sync
-uv run som-analyze
+uv run quality-checker
 Pop-Location
 ```
 
 ## Smoke test for analysis + DB history
 
 ```powershell
-Push-Location som_analyzer
-uv run som-analyze-smoke "C:\path\to\input.xlsx"
+Push-Location quality_checker
+uv run quality-checker-smoke "C:\path\to\input.xlsx"
 Pop-Location
 ```

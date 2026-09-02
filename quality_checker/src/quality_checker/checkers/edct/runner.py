@@ -281,18 +281,25 @@ def _evaluate_business_rules(
         if edi_mode not in allowed_edi_modes:
             fail(row, "edi_mode", "EDI Mode", "Required value must be WEB EDI or Standard EDI")
 
+        request_date_filled = bool(_normalized_text(value(row, EDCT_COFOR_REQUEST_DATE_COLUMN)))
         punch_in_cofor_template = (
             _normalized_choice(value(row, "Supplier Punch code")) in cofor_template_punches
         )
-        if punch_in_cofor_template and not _normalized_text(
-            value(row, EDCT_COFOR_REQUEST_DATE_COLUMN)
-        ):
+        if punch_in_cofor_template and not request_date_filled:
             fail(
                 row,
                 "date_required",
                 EDCT_COFOR_REQUEST_DATE_COLUMN,
                 f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is required because the Punch Code exists "
                 "in Template-Cofor-Creation",
+            )
+        if request_date_filled and not punch_in_cofor_template:
+            fail(
+                row,
+                "cofor_template",
+                "Supplier Punch code",
+                "Supplier Punch code must exist in Template-Cofor-Creation when "
+                f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is populated",
             )
         punch_in_open_task = (
             _normalized_punch(value(row, "Supplier Punch code")) in open_task_punches

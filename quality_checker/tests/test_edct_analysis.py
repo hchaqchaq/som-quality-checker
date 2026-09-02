@@ -789,21 +789,21 @@ class EdctWorkbookTests(unittest.TestCase):
 
     def test_creation_of_cofors_request_date_accepts_only_supported_dates(self) -> None:
         scenarios = (
-            ("empty", "", 0),
-            ("native date", date(2026, 8, 10), 0),
-            ("strict text", "10/08/2026", 0),
-            ("future date", "10/08/2030", 0),
-            ("dot date", "10.08.2026", 1),
-            ("impossible date", "31/02/2026", 1),
-            ("timestamp text", "10/08/2026 12:00", 1),
+            ("empty", "", "unmatched", 0),
+            ("native date", date(2026, 8, 10), "9999", 0),
+            ("strict text", "10/08/2026", "9999", 0),
+            ("future date", "10/08/2030", "9999", 0),
+            ("dot date", "10.08.2026", "9999", 1),
+            ("impossible date", "31/02/2026", "9999", 1),
+            ("timestamp text", "10/08/2026 12:00", "9999", 1),
         )
-        for label, request_date, expected_check in scenarios:
+        for label, request_date, supplier_punch, expected_check in scenarios:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
                 path = build_edct_workbook(
                     Path(temp),
                     row_overrides={
                         3: {
-                            "Supplier Punch code": "unmatched",
+                            "Supplier Punch code": supplier_punch,
                             "OPEN TASK": "",
                             "Creation of Cofors request date": request_date,
                         }
@@ -817,6 +817,42 @@ class EdctWorkbookTests(unittest.TestCase):
                     self.assertIn(
                         "Invalid date format, expected DD/MM/YYYY",
                         result.row_results[3].comment,
+                    )
+
+    def test_request_date_requires_supplier_punch_in_cofor_template(self) -> None:
+        scenarios = (
+            ("matching punch", " 1003 ", 0),
+            ("absent punch", "9999", 1),
+        )
+        for label, template_punch, expected_check in scenarios:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(
+                    Path(temp),
+                    row_overrides={
+                        3: {
+                            "Supplier Punch code": "1003",
+                            "Creation of Cofors request date": "10/08/2026",
+                        }
+                    },
+                )
+                workbook = load_workbook(path)
+                workbook["Template-Cofor-Creation"]["D3"] = template_punch
+                workbook.save(path)
+                workbook.close()
+
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    result = run_edct_analysis(path, connection=connection)
+
+                self.assertEqual(result.row_results[3].check, expected_check)
+                if expected_check:
+                    self.assertIn(
+                        "Supplier Punch code must exist in Template-Cofor-Creation when "
+                        "Creation of Cofors request date is populated",
+                        result.row_results[3].comment,
+                    )
+                    self.assertEqual(
+                        result.rule_totals[("cofor_template", "Supplier Punch code")],
+                        1,
                     )
 
     def test_matching_cofor_template_punch_requires_request_date(self) -> None:
@@ -1029,6 +1065,7 @@ class EdctWorkbookTests(unittest.TestCase):
             *EDCT_COFOR_COLUMNS,
             *EDCT_DATE_COLUMNS,
             *EDCT_DATED_COMMENT_COLUMNS,
+            "Supplier Punch code",
         )
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

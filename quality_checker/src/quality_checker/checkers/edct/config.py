@@ -68,6 +68,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
     "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD/MM/YYYY` |",
     f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD/MM/YYYY` |",
+    f"| `Supplier Punch code` | `{EDCT_COFOR_REQUEST_DATE_COLUMN}` is populated | No | Exact Punch Code from `Template-Cofor-Creation` column D, rows 3 onward |",
     "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD/MM/YYYY`; today or earlier |",
     "| `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD/MM/YYYY: comment` |",
     "| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |",

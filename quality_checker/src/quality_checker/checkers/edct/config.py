@@ -43,7 +43,6 @@ EDCT_COFOR_COLUMNS = (
     "Empty Cofor",
 )
 
-EDCT_PHONE_COLUMNS = ("Phone", "Phone2", "Phone3", "Phone4", "Phone5", "Phone6", "Phone7")
 
 EDCT_DATE_COLUMNS = (
     "First communication sent",
@@ -60,24 +59,19 @@ EDCT_DATED_COMMENT_COLUMNS = ("Comments", "Kick-off comments", "Readiness Commen
 
 EDCT_PORTAL_COLUMNS = ("eSupplierConnect", "B2B", "New supplier portal", "SPM", "iTMS")
 EDCT_TRIPLE_STATUS_VALUES = ("Valid", "No Valid")
-EDCT_YES_NO_VALUES = ("YES", "NO")
 EDCT_PORTAL_VALUES = ("YES", "NOT")
 EDCT_EDI_MODE_VALUES = ("WEB EDI", "Standard EDI")
-EDCT_PHONE_DIGITS = (7, 20)
 
 EDCT_RULE_CATALOGUE_ROWS = (
     "| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
     "| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
     "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
-    "| `Phone`, `Phone2`, `Phone3`, `Phone4`, `Phone5`, `Phone6`, `Phone7` | When populated | Yes | 7-20 digits after removing spaces, `+`, parentheses, dots, and hyphens |",
-    "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD.MM.YYYY` |",
-    f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD.MM.YYYY` |",
-    "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD.MM.YYYY`; today or earlier |",
-    "| `Comments`, `Kick-off comments` | When populated | Yes | `DD.MM.YYYY: comment` or `DD/MM/YYYY: comment` |",
-    "| `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD.MM.YYYY: comment` |",
+    "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD/MM/YYYY` |",
+    f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD/MM/YYYY` |",
+    "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD/MM/YYYY`; today or earlier |",
+    "| `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD/MM/YYYY: comment` |",
     "| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |",
-    "| `Overseas` | Always | Yes | `YES` or `NO` |",
-    "| `Shipping location` | `Overseas = YES` | No | `YES` or `NO` |",
+    "| `Overseas` | Always | Yes | Exact `YES`, `NOT`, or empty after trimming surrounding whitespace |",
     "| `Supplier Confimation` | Always | Yes | `YES` |",
     "| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |",
     "| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |",
@@ -89,6 +83,14 @@ EDCT_UNCHECKED_COLUMNS = (
     "Priority",
     "Seller Name",
     "Seller address",
+    "Phone",
+    "Phone2",
+    "Phone3",
+    "Phone4",
+    "Phone5",
+    "Phone6",
+    "Phone7",
+    "Shipping location",
     "Manufacturer Name",
     "Manufacturer company address",
     "Shipper Cofor Name",
@@ -133,11 +135,9 @@ EDCT_REQUIRED_COLUMNS = tuple(
             *EDCT_FORMULA_COLUMNS,
             *EDCT_EMAIL_COLUMNS,
             *EDCT_COFOR_COLUMNS,
-            *EDCT_PHONE_COLUMNS,
             *EDCT_DATE_COLUMNS,
             *EDCT_DATED_COMMENT_COLUMNS,
             *EDCT_PORTAL_COLUMNS,
-            "Shipping location",
             "Overseas",
             "Supplier Confimation",
             "OPEN TASK",

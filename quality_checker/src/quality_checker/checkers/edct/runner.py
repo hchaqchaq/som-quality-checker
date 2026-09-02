@@ -43,15 +43,12 @@ from .config import (
     EDCT_HEADER_ROW,
     EDCT_INDEX_COLUMN,
     EDCT_INDEX_COLUMNS,
-    EDCT_PHONE_COLUMNS,
-    EDCT_PHONE_DIGITS,
     EDCT_PORTAL_COLUMNS,
     EDCT_PORTAL_VALUES,
     EDCT_PROJECT,
     EDCT_REQUIRED_COLUMNS,
     EDCT_REQUIRED_SHEETS,
     EDCT_TRIPLE_STATUS_VALUES,
-    EDCT_YES_NO_VALUES,
 )
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
@@ -104,16 +101,11 @@ def _is_valid_email(value: object) -> bool:
     return bool(parts) and all(part and EMAIL_REGEX.fullmatch(part) for part in parts)
 
 
-def _is_valid_phone(value: object) -> bool:
-    text = _normalized_text(value)
-    if not text:
-        return True
-    digits = re.sub(r"[ +().-]", "", text)
-    minimum, maximum = EDCT_PHONE_DIGITS
-    return digits.isdigit() and minimum <= len(digits) <= maximum
-
-
-def _parse_date(value: object, *, allow_slash: bool = False) -> date | None:
+def _parse_date(
+    value: object,
+    *,
+    formats: tuple[str, ...] = ("%d/%m/%Y",),
+) -> date | None:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -121,7 +113,6 @@ def _parse_date(value: object, *, allow_slash: bool = False) -> date | None:
     text = _normalized_text(value)
     if not text:
         return None
-    formats = ("%d.%m.%Y", "%d/%m/%Y") if allow_slash else ("%d.%m.%Y",)
     for date_format in formats:
         try:
             return datetime.strptime(text, date_format).date()
@@ -130,14 +121,12 @@ def _parse_date(value: object, *, allow_slash: bool = False) -> date | None:
     return None
 
 
-def _is_valid_dated_comment(value: object, *, allow_slash: bool) -> bool:
+def _is_valid_dated_comment(value: object) -> bool:
     text = _normalized_text(value)
     if not text:
         return True
     date_text, separator, comment = text.partition(":")
-    return bool(
-        separator and comment.strip() and _parse_date(date_text.strip(), allow_slash=allow_slash)
-    )
+    return bool(separator and comment.strip() and _parse_date(date_text.strip()))
 
 
 def _normalized_punch(value: object) -> str:
@@ -205,7 +194,6 @@ def _evaluate_business_rules(
 
     open_task_punches = _open_task_punches(workbook)
     triple_status_values = {item.casefold() for item in EDCT_TRIPLE_STATUS_VALUES}
-    yes_no_values = {item.casefold() for item in EDCT_YES_NO_VALUES}
     portal_values = {item.casefold() for item in EDCT_PORTAL_VALUES}
     edi_mode_values = {item.casefold() for item in EDCT_EDI_MODE_VALUES}
     cofor_template_punches = _cofor_template_punches(workbook)
@@ -250,41 +238,33 @@ def _evaluate_business_rules(
                 if text and COFOR_REGEX.fullmatch(text) is None:
                     fail(row, "cofor", column, "Invalid COFOR format")
 
-        for column in EDCT_PHONE_COLUMNS:
-            if not _is_valid_phone(value(row, column)):
-                fail(row, "phone", column, "Invalid phone number")
-
         for column in EDCT_DATE_COLUMNS:
             raw = value(row, column)
             if _normalized_text(raw) and _parse_date(raw) is None:
-                reason = (
-                    f"{EDCT_COFOR_REQUEST_DATE_COLUMN} has an invalid date format"
-                    if column == EDCT_COFOR_REQUEST_DATE_COLUMN
-                    else "Invalid date"
+                fail(
+                    row,
+                    "date",
+                    column,
+                    "Invalid date format, expected DD/MM/YYYY",
                 )
-                fail(row, "date", column, reason)
         if effective_date is not None and effective_date > analysis_date:
             fail(row, "date_future", "Effective kick-off date", "Date cannot be in the future")
 
         for column in EDCT_DATED_COMMENT_COLUMNS:
-            if not _is_valid_dated_comment(
-                value(row, column),
-                allow_slash=column in ("Comments", "Kick-off comments"),
-            ):
+            if not _is_valid_dated_comment(value(row, column)):
                 fail(row, "dated_comment", column, "Invalid dated comment")
-
         triple_status = _normalized_choice(value(row, "Triple Status"))
         if cofor_date_filled and triple_status not in triple_status_values:
             fail(row, "triple_status", "Triple Status", "Required value must be Valid or No Valid")
 
-        overseas = _normalized_choice(value(row, "Overseas"))
-        if overseas not in {"", *yes_no_values}:
-            fail(row, "overseas", "Overseas", "Invalid value")
-        if (
-            overseas == "yes"
-            and _normalized_choice(value(row, "Shipping location")) not in yes_no_values
-        ):
-            fail(row, "shipping_location", "Shipping location", "Required value must be Yes or No")
+        overseas = _normalized_text(value(row, "Overseas"))
+        if overseas not in {"", "YES", "NOT"}:
+            fail(
+                row,
+                "overseas",
+                "Overseas",
+                "Invalid value, expected YES, NOT, or empty",
+            )
 
         supplier_confirmation = _normalized_choice(value(row, "Supplier Confimation"))
         if supplier_confirmation not in {"", "yes"}:
@@ -722,6 +702,13 @@ def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
     for row in range(EDCT_HEADER_ROW + 1, worksheet.max_row + 1):
         worksheet.cell(row, check_column).value = None
         worksheet.cell(row, comment_column).value = None
+    headers = _header_map(worksheet)
+    for column in EDCT_DATE_COLUMNS:
+        column_index = headers[column]
+        for row in range(EDCT_HEADER_ROW + 1, worksheet.max_row + 1):
+            cell = worksheet.cell(row, column_index)
+            if isinstance(cell.value, (date, datetime)):
+                cell.number_format = "DD/MM/YYYY"
 
     for row in result.assessed_rows:
         row_result = result.row_results[row]

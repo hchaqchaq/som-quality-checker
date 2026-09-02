@@ -24,15 +24,12 @@ from quality_checker.checkers.edct.config import (
     EDCT_EDI_MODE_VALUES,
     EDCT_EMAIL_COLUMNS,
     EDCT_FORMULA_COLUMNS,
-    EDCT_PHONE_COLUMNS,
-    EDCT_PHONE_DIGITS,
     EDCT_PORTAL_COLUMNS,
     EDCT_PORTAL_VALUES,
     EDCT_REQUIRED_COLUMNS,
     EDCT_RULE_CATALOGUE_ROWS,
     EDCT_TRIPLE_STATUS_VALUES,
     EDCT_UNCHECKED_COLUMNS,
-    EDCT_YES_NO_VALUES,
 )
 from quality_checker.checkers.edct.runner import (
     EdctLoadError,
@@ -47,16 +44,18 @@ def build_edct_workbook(
     include_open_task: bool = True,
     row_overrides: dict[int, dict[str, object]] | None = None,
     include_cofor_template: bool = True,
+    optional_columns: tuple[str, ...] = (),
 ) -> Path:
     workbook = Workbook()
+    all_columns = (*EDCT_REQUIRED_COLUMNS, *optional_columns)
     supplier = workbook.active
     supplier.title = "Supplier Level"
-    supplier.append(["metadata"] * len(EDCT_REQUIRED_COLUMNS))
-    supplier.append(list(EDCT_REQUIRED_COLUMNS))
+    supplier.append(["metadata"] * len(all_columns))
+    supplier.append(list(all_columns))
 
-    base = {column: "" for column in EDCT_REQUIRED_COLUMNS}
+    base: dict[str, object] = {column: "" for column in all_columns}
     for row_number, index in ((3, "Metz_01"), (4, "Metz_02")):
-        values = dict(base)
+        values: dict[str, object] = dict(base)
         values.update(
             {
                 "Index": index,
@@ -71,13 +70,13 @@ def build_edct_workbook(
         for column in EDCT_FORMULA_COLUMNS:
             values[column] = f'=IF(A{row_number}="","",A{row_number})'
         values.update((row_overrides or {}).get(row_number, {}))
-        supplier.append([values[column] for column in EDCT_REQUIRED_COLUMNS])
+        supplier.append([values[column] for column in all_columns])
 
-    supplier.append([""] * len(EDCT_REQUIRED_COLUMNS))
+    supplier.append([""] * len(all_columns))
     supplier["A3"].fill = PatternFill("solid", fgColor="FF0000")
     table = Table(
         displayName="Tabella2",
-        ref=f"A2:{get_column_letter(len(EDCT_REQUIRED_COLUMNS))}5",
+        ref=f"A2:{get_column_letter(len(all_columns))}5",
     )
     table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     supplier.add_table(table)
@@ -252,7 +251,10 @@ class EdctWorkbookTests(unittest.TestCase):
             path = build_edct_workbook(directory, row_overrides={3: {"Overseas": "MAYBE"}})
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
-            self.assertIn("Overseas", result.row_results[3].comment)
+            self.assertIn(
+                "Invalid value, expected YES, NOT, or empty: Overseas = MAYBE",
+                result.row_results[3].comment,
+            )
             result.workbook.close()
 
     def test_open_task_helper_and_columns_only_structure_error(self) -> None:
@@ -448,12 +450,10 @@ class EdctWorkbookTests(unittest.TestCase):
         )
         for configured_value in (
             *EDCT_TRIPLE_STATUS_VALUES,
-            *EDCT_YES_NO_VALUES,
             *EDCT_PORTAL_VALUES,
             *EDCT_EDI_MODE_VALUES,
         ):
             self.assertIn(f"`{configured_value}`", documentation)
-        self.assertIn(f"{EDCT_PHONE_DIGITS[0]}-{EDCT_PHONE_DIGITS[1]} digits", documentation)
         field_rules = documentation.split("## Field rules", 1)[1].split(
             "## Explicitly unchecked fields", 1
         )[0]
@@ -500,6 +500,58 @@ class EdctWorkbookTests(unittest.TestCase):
             )
             self.assertRegex(output_path.name, r"input_eDCT_checked_\d{8}_\d{6}\.xlsx")
             self.assertEqual(load_workbook(input_path)["Other Sheet"]["A1"].value, "keep me")
+            exported.close()
+
+    def test_optional_phone_and_shipping_columns_are_ignored_and_preserved(self) -> None:
+        optional_columns = ("Phone", "Phone2", "Shipping location")
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(
+                directory,
+                optional_columns=optional_columns,
+                row_overrides={
+                    3: {
+                        "Phone": "not a phone number",
+                        "Phone2": 123,
+                        "Shipping location": "arbitrary value",
+                    }
+                },
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                output_path = export_edct_result(result, directory)
+
+            self.assertEqual(result.row_results[3].check, 0)
+            self.assertFalse(any(rule == "phone" for rule, _ in result.rule_totals))
+            self.assertFalse(any(rule == "shipping_location" for rule, _ in result.rule_totals))
+            exported = load_workbook(output_path)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            for column, expected in (
+                ("Phone", "not a phone number"),
+                ("Phone2", 123),
+                ("Shipping location", "arbitrary value"),
+            ):
+                self.assertEqual(supplier.cell(3, headers.index(column) + 1).value, expected)
+            exported.close()
+
+    def test_export_formats_native_dates_as_day_month_year(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(
+                directory,
+                row_overrides={3: {"First communication sent": date(2026, 9, 2)}},
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(input_path, connection=connection)
+                output_path = export_edct_result(result, directory)
+
+            exported = load_workbook(output_path)
+            supplier = exported["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            date_cell = supplier.cell(3, headers.index("First communication sent") + 1)
+            self.assertEqual(date_cell.value, datetime(2026, 9, 2))
+            self.assertEqual(date_cell.number_format, "DD/MM/YYYY")
             exported.close()
 
     def test_export_includes_styles_created_during_annotation(self) -> None:
@@ -705,7 +757,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 Path(temp),
                 row_overrides={
                     3: {
-                        "Effective kick-off date": "30.07.2026",
+                        "Effective kick-off date": "30/07/2026",
                         "eSupplierConnect": "NOT",
                         "B2B": "NOT",
                         "New supplier portal": "NOT",
@@ -714,7 +766,6 @@ class EdctWorkbookTests(unittest.TestCase):
                         "OPEN TASK": "YES",
                         "Sales contact": "first@example.com, second@example.com",
                         "Seller COFOR": "ABC",
-                        "Phone": "call me",
                         "First communication sent": "30/07/2026",
                         "Readiness Comments": "30/07/2026: contacted",
                         "Participants": "Name - person@example.com",
@@ -726,13 +777,10 @@ class EdctWorkbookTests(unittest.TestCase):
                     path, connection=connection, analysis_date=date(2026, 7, 30)
                 )
 
-        self.assertEqual(result.row_results[3].check, 6)
+        self.assertEqual(result.row_results[3].check, 3)
         for column in (
             "Sales contact",
             "Seller COFOR",
-            "Phone",
-            "First communication sent",
-            "Readiness Comments",
             "Participants",
         ):
             self.assertIn(column, result.row_results[3].comment)
@@ -743,11 +791,11 @@ class EdctWorkbookTests(unittest.TestCase):
         scenarios = (
             ("empty", "", 0),
             ("native date", date(2026, 8, 10), 0),
-            ("strict text", "10.08.2026", 0),
-            ("future date", "10.08.2030", 0),
-            ("slash date", "10/08/2026", 1),
-            ("impossible date", "31.02.2026", 1),
-            ("timestamp text", "10.08.2026 12:00", 1),
+            ("strict text", "10/08/2026", 0),
+            ("future date", "10/08/2030", 0),
+            ("dot date", "10.08.2026", 1),
+            ("impossible date", "31/02/2026", 1),
+            ("timestamp text", "10/08/2026 12:00", 1),
         )
         for label, request_date, expected_check in scenarios:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
@@ -767,7 +815,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 self.assertEqual(result.row_results[3].check, expected_check)
                 if expected_check:
                     self.assertIn(
-                        "Creation of Cofors request date has an invalid date format",
+                        "Invalid date format, expected DD/MM/YYYY",
                         result.row_results[3].comment,
                     )
 
@@ -851,7 +899,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 ):
                     run_edct_analysis(path, connection=connection)
 
-    def test_email_phone_and_dated_comment_boundaries(self) -> None:
+    def test_email_and_dated_comment_boundaries(self) -> None:
         scenarios = (
             ("single email", {"Participants": "one@example.com"}, 0),
             ("email list", {"Participants": "one@example.com; two@example.org"}, 0),
@@ -862,13 +910,10 @@ class EdctWorkbookTests(unittest.TestCase):
             ("display-name email", {"Participants": "Name <one@example.com>"}, 1),
             ("internal empty email", {"Participants": "one@example.com;;two@example.org"}, 1),
             ("separator-only email", {"Participants": ";;"}, 1),
-            ("seven-digit phone", {"Phone": "1234567"}, 0),
-            ("formatted phone", {"Phone": "+(33) 1.23-45-67"}, 0),
-            ("six-digit phone", {"Phone": "123456"}, 1),
-            ("twenty-one-digit phone", {"Phone": "1" * 21}, 1),
             ("slash general comment", {"Comments": "30/07/2026: ready"}, 0),
-            ("dot readiness comment", {"Readiness Comments": "30.07.2026: ready"}, 0),
-            ("slash readiness comment", {"Readiness Comments": "30/07/2026: ready"}, 1),
+            ("dot general comment", {"Comments": "30.07.2026: ready"}, 1),
+            ("dot readiness comment", {"Readiness Comments": "30.07.2026: ready"}, 1),
+            ("slash readiness comment", {"Readiness Comments": "30/07/2026: ready"}, 0),
         )
         for label, overrides, expected_check in scenarios:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
@@ -894,7 +939,7 @@ class EdctWorkbookTests(unittest.TestCase):
             (
                 "conditional email after trigger",
                 {
-                    "Effective kick-off date": "30.07.2026",
+                    "Effective kick-off date": "30/07/2026",
                     "Sales contact": "invalid",
                     **valid_portals,
                 },
@@ -904,7 +949,7 @@ class EdctWorkbookTests(unittest.TestCase):
             (
                 "conditional cofor after trigger",
                 {
-                    "Effective kick-off date": "30.07.2026",
+                    "Effective kick-off date": "30/07/2026",
                     "Seller COFOR": "invalid",
                     **valid_portals,
                 },
@@ -913,7 +958,7 @@ class EdctWorkbookTests(unittest.TestCase):
             (
                 "future effective date",
                 {
-                    "Effective kick-off date": "31.07.2026",
+                    "Effective kick-off date": "31/07/2026",
                     **valid_portals,
                 },
                 1,
@@ -922,26 +967,29 @@ class EdctWorkbookTests(unittest.TestCase):
             (
                 "triple status after trigger",
                 {
-                    "Cofor created date": "30.07.2026",
+                    "Cofor created date": "30/07/2026",
                     "Triple Status": "",
                     "EDI Mode": "WEB EDI",
                 },
                 1,
             ),
-            ("shipping location not required", {"Overseas": "NO", "Shipping location": ""}, 0),
-            ("shipping location required", {"Overseas": "YES", "Shipping location": ""}, 1),
+            ("overseas empty", {"Overseas": ""}, 0),
+            ("overseas exact YES", {"Overseas": " YES "}, 0),
+            ("overseas exact NOT", {"Overseas": "NOT"}, 0),
+            ("overseas lowercase", {"Overseas": "yes"}, 1),
+            ("overseas NO", {"Overseas": "NO"}, 1),
             ("supplier confirmation optional", {"Supplier Confimation": ""}, 0),
             ("supplier confirmation invalid", {"Supplier Confimation": "NO"}, 1),
             (
                 "portals required after trigger",
-                {"Effective kick-off date": "30.07.2026"},
+                {"Effective kick-off date": "30/07/2026"},
                 len(EDCT_PORTAL_COLUMNS),
             ),
             ("edi mode before trigger", {"EDI Mode": ""}, 0),
             (
                 "edi mode after trigger",
                 {
-                    "Cofor created date": "30.07.2026",
+                    "Cofor created date": "30/07/2026",
                     "Triple Status": "Valid",
                     "EDI Mode": "",
                 },
@@ -963,11 +1011,10 @@ class EdctWorkbookTests(unittest.TestCase):
         invalid_values = {
             **{column: "invalid email" for column in EDCT_EMAIL_COLUMNS},
             **{column: "invalid cofor" for column in EDCT_COFOR_COLUMNS},
-            **{column: "invalid phone" for column in EDCT_PHONE_COLUMNS},
             **{column: "invalid date" for column in EDCT_DATE_COLUMNS},
             **{column: "invalid comment" for column in EDCT_DATED_COMMENT_COLUMNS},
             "Triple Status": "Valid",
-            "Overseas": "NO",
+            "Overseas": "YES",
             "Supplier Confimation": "YES",
             "eSupplierConnect": "YES",
             "B2B": "YES",
@@ -980,7 +1027,6 @@ class EdctWorkbookTests(unittest.TestCase):
         expected_columns = (
             *EDCT_EMAIL_COLUMNS,
             *EDCT_COFOR_COLUMNS,
-            *EDCT_PHONE_COLUMNS,
             *EDCT_DATE_COLUMNS,
             *EDCT_DATED_COMMENT_COLUMNS,
         )
@@ -1016,9 +1062,8 @@ class EdctWorkbookTests(unittest.TestCase):
                         "Cofor created date": "invalid date",
                         "Triple Status": "",
                         "EDI Mode": "",
-                        "Effective kick-off date": "30.07.2026",
+                        "Effective kick-off date": "30/07/2026",
                         "Overseas": "YES",
-                        "Shipping location": "",
                         "Supplier Confimation": "NO",
                         "OPEN TASK": "",
                     },
@@ -1047,13 +1092,12 @@ class EdctWorkbookTests(unittest.TestCase):
             ]
             exported.close()
 
-        self.assertEqual(result.row_results[3].check, 11)
+        self.assertEqual(result.row_results[3].check, 10)
         self.assertEqual(result.row_results[4].check, 1)
-        self.assertEqual(exported_checks, [11, 1])
+        self.assertEqual(exported_checks, [10, 1])
         for column in (
             "Triple Status",
             "EDI Mode",
-            "Shipping location",
             "Supplier Confimation",
             "OPEN TASK",
             "eSupplierConnect",
@@ -1065,7 +1109,7 @@ class EdctWorkbookTests(unittest.TestCase):
             self.assertIn(column, result.row_results[3].comment)
             self.assertIn(column, exported_comments[0])
         self.assertIn("OPEN TASK", exported_comments[1])
-        self.assertEqual(sum(row["fail_count"] for row in totals), 12)
+        self.assertEqual(sum(row["fail_count"] for row in totals), 11)
 
     def test_formula_structure_uses_formula_reference_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

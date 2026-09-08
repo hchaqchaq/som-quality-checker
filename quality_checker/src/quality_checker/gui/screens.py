@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..application import APP_LOGO_PATH, PREVIEW_ROWS
-from ..checkers.edct.config import EDCT_INDEX_COLUMNS
+from ..checkers.edct.config import EDCT_HEADER_ROW, EDCT_INDEX_COLUMNS, EDCT_PN_SHEET
 from ..checkers.edct.runner import EdctRunResult, export_edct_result, run_edct_analysis
 from ..checkers.som.config import ScopeFilterDefinition
 from ..checkers.som.loader import load_excel
@@ -387,7 +387,8 @@ class ProjectSelectionPage(QWidget):
         self.edct_button = QPushButton("Open eDCT checker")
         self.edct_button.setObjectName("projectChoice")
         self.edct_description = QLabel(
-            "eDCT analysis validates Supplier Level rows, reports failures, and exports a preserved workbook copy."
+            "eDCT analysis validates Supplier Level and PN Level rows, reports failures, "
+            "and exports a preserved workbook copy."
         )
         self.edct_description.setObjectName("supportingText")
         self.edct_description.setWordWrap(True)
@@ -412,7 +413,16 @@ class ProjectSelectionPage(QWidget):
 
 class EdctPage(QWidget):
     status_changed = pyqtSignal(str)
-    preview_columns = ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment")
+    preview_columns = (
+        "Worksheet",
+        "Source row",
+        "Index",
+        "Supplier Punch code / Punch seller",
+        "Supplier name",
+        "Triplet COFOR",
+        "Check",
+        "Comment",
+    )
 
     def __init__(self, controller: QualityCheckerController, history_page: HistoryPage) -> None:
         super().__init__()
@@ -587,21 +597,38 @@ class EdctPage(QWidget):
     def _fill_preview(self, result: EdctRunResult) -> None:
         worksheet = result.workbook["Supplier Level"]
         headers = {
-            str(cell.value).strip(): cell.column for cell in worksheet[2] if cell.value is not None
+            str(cell.value).strip(): cell.column
+            for cell in worksheet[EDCT_HEADER_ROW]
+            if cell.value is not None
         }
         index_header = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
         rows = result.assessed_rows[:PREVIEW_ROWS]
         self.preview_table.setRowCount(len(rows))
-        for display_row, workbook_row in enumerate(rows):
+        for display_row, row_key in enumerate(rows):
+            sheet_name, workbook_row = row_key
+            if sheet_name == EDCT_PN_SHEET:
+                punch, triplet = result.pn_values[workbook_row]
+                index = supplier_name = ""
+            else:
+                index = worksheet.cell(workbook_row, headers[index_header]).value
+                punch = worksheet.cell(workbook_row, headers["Supplier Punch code"]).value
+                supplier_name = worksheet.cell(workbook_row, headers["Supplier name"]).value
+                triplet = worksheet.cell(workbook_row, headers["Triplet COFOR"]).value
+            row_result = result.row_results[row_key]
             values = (
-                worksheet.cell(workbook_row, headers[index_header]).value,
-                worksheet.cell(workbook_row, headers["Supplier Punch code"]).value,
-                worksheet.cell(workbook_row, headers["Supplier name"]).value,
-                result.row_results[workbook_row].check,
-                result.row_results[workbook_row].comment,
+                sheet_name,
+                workbook_row,
+                index,
+                punch,
+                supplier_name,
+                triplet,
+                row_result.check,
+                row_result.comment,
             )
             for column, value in enumerate(values):
-                self.preview_table.setItem(display_row, column, QTableWidgetItem(str(value)))
+                self.preview_table.setItem(
+                    display_row, column, QTableWidgetItem("" if value is None else str(value))
+                )
         self.preview_table.resizeColumnsToContents()
 
     def _clear_worker(self) -> None:

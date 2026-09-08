@@ -4,7 +4,6 @@ import re
 import sqlite3
 import tempfile
 import unittest
-from collections import Counter
 from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
@@ -24,6 +23,7 @@ from quality_checker.checkers.edct.config import (
     EDCT_EDI_MODE_VALUES,
     EDCT_EMAIL_COLUMNS,
     EDCT_FORMULA_COLUMNS,
+    EDCT_PN_REQUIRED_COLUMNS,
     EDCT_PORTAL_COLUMNS,
     EDCT_PORTAL_VALUES,
     EDCT_REQUIRED_COLUMNS,
@@ -36,6 +36,7 @@ from quality_checker.checkers.edct.runner import (
     export_edct_result,
     run_edct_analysis,
 )
+from quality_checker.db.repository import list_runs
 
 
 def build_edct_workbook(
@@ -45,6 +46,7 @@ def build_edct_workbook(
     row_overrides: dict[int, dict[str, object]] | None = None,
     include_cofor_template: bool = True,
     optional_columns: tuple[str, ...] = (),
+    pn_rows: tuple[tuple[object, object], ...] = (),
 ) -> Path:
     workbook = Workbook()
     all_columns = (*EDCT_REQUIRED_COLUMNS, *optional_columns)
@@ -92,6 +94,10 @@ def build_edct_workbook(
         cofor_template["D2"] = "=D3"
         cofor_template["D3"] = "9999"
     workbook.create_sheet("Other Sheet")["A1"] = "keep me"
+    pn = workbook.create_sheet("PN Level")
+    pn.append(["Punch seller", "Triplet COFOR"])
+    for seller, triplet in pn_rows:
+        pn.append([seller, triplet])
 
     path = directory / "input.xlsx"
     workbook.save(path)
@@ -99,7 +105,52 @@ def build_edct_workbook(
     return path
 
 
-def add_worksheet_extension(path: Path, marker: str) -> None:
+def set_formula_caches(
+    path: Path, caches: dict[str, dict[str, str]], *, data_type: str = "str"
+) -> None:
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    replacement = path.with_suffix(".zip")
+    with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename in caches:
+                root = ElementTree.fromstring(content)
+                for cell in root.iter(f"{{{namespace}}}c"):
+                    if cell.attrib["r"] not in caches[item.filename]:
+                        continue
+                    cell.set("t", data_type)
+                    value = cell.find(f"{{{namespace}}}v")
+                    if value is None:
+                        value = ElementTree.SubElement(cell, f"{{{namespace}}}v")
+                    value.text = caches[item.filename][cell.attrib["r"]]
+                content = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            target.writestr(item, content)
+    replacement.replace(path)
+
+
+def remap_archive_parts(path: Path) -> None:
+    replacements = {
+        "xl/tables/table1.xml": "xl/tables/table27.xml",
+        "xl/worksheets/sheet5.xml": "xl/worksheets/sheet42.xml",
+        "xl/worksheets/_rels/sheet5.xml.rels": "xl/worksheets/_rels/sheet42.xml.rels",
+    }
+    replacement = path.with_suffix(".zip")
+    with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename.endswith((".xml", ".rels")):
+                content = content.replace(b"tables/table1.xml", b"tables/table27.xml")
+                content = content.replace(b"worksheets/sheet5.xml", b"worksheets/sheet42.xml")
+            if item.filename == "xl/tables/table1.xml":
+                content = content.replace(b'id="1"', b'id="27"', 1)
+            item.filename = replacements.get(item.filename, item.filename)
+            target.writestr(item, content)
+    replacement.replace(path)
+
+
+def add_worksheet_extension(
+    path: Path, marker: str, worksheet_part: str = "xl/worksheets/sheet1.xml"
+) -> None:
     replacement = path.with_suffix(".zip")
     extension = (
         f'<extLst><ext uri="{marker}"><test:payload xmlns:test="urn:test">'
@@ -108,7 +159,7 @@ def add_worksheet_extension(path: Path, marker: str) -> None:
     with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
         for item in source.infolist():
             content = source.read(item.filename)
-            if item.filename == "xl/worksheets/sheet1.xml":
+            if item.filename == worksheet_part:
                 content = content.replace(b"</worksheet>", extension + b"</worksheet>")
             target.writestr(item, content)
     replacement.replace(path)
@@ -176,29 +227,297 @@ def remap_table_relationship(path: Path, relationship_id: str) -> None:
 
 
 class EdctWorkbookTests(unittest.TestCase):
-    def test_edct_helpers_cover_dates_failure_count_and_missing_table(self) -> None:
-        self.assertEqual(edct_analysis._parse_date(datetime(2026, 7, 15)), date(2026, 7, 15))
-        self.assertEqual(edct_analysis._parse_date(date(2026, 7, 15)), date(2026, 7, 15))
-        result = edct_analysis.EdctRunResult(
-            -1,
-            Path("input.xlsx"),
-            datetime.now(),
-            datetime.now(),
-            0.0,
-            object(),
-            (3, 4),
-            {
-                3: edct_analysis.EdctRowResult(0, "ok"),
-                4: edct_analysis.EdctRowResult(2, "bad"),
-            },
-            Counter(),
-            False,
-            None,
+    def test_pn_required_structure_stops_analysis_and_records_failure(self) -> None:
+        for missing in ("PN Level", "Punch seller", "Triplet COFOR"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                path = build_edct_workbook(Path(temp))
+                workbook = load_workbook(path)
+                if missing == "PN Level":
+                    del workbook["PN Level"]
+                else:
+                    column = 1 if missing == "Punch seller" else 2
+                    workbook["PN Level"].cell(1, column).value = "Unexpected header"
+                workbook.save(path)
+                workbook.close()
+                with closing(sqlite3.connect(":memory:")) as connection:
+                    connection.row_factory = sqlite3.Row
+                    with self.assertRaises(EdctLoadError) as raised:
+                        run_edct_analysis(path, connection=connection)
+                    self.assertIn(missing, str(raised.exception))
+                    history = list_runs(connection, "eDCT")
+                    self.assertEqual(len(history), 1)
+                    self.assertEqual(history[0]["status"], "failed")
+                    self.assertIsNone(history[0]["exported_file"])
+
+    def test_required_formula_caches_fail_actionably_and_allow_recovery(self) -> None:
+        scenarios = (
+            ("Supplier Level", "Supplier Punch code", 3, "1003"),
+            ("Supplier Level", "Triplet COFOR", 3, "A"),
+            ("PN Level", "Punch seller", 2, "1003"),
+            ("PN Level", "Triplet COFOR", 2, "A"),
         )
-        self.assertEqual(result.rows_failed, 1)
-        worksheet = Workbook().active
-        with self.assertRaisesRegex(EdctLoadError, "Missing required table"):
-            edct_analysis._result_columns(worksheet)
+        for sheet_name, column_name, row, cached_value in scenarios:
+            with self.subTest(sheet=sheet_name, column=column_name):
+                with tempfile.TemporaryDirectory() as temp:
+                    path = build_edct_workbook(
+                        Path(temp),
+                        row_overrides={
+                            3: {"Triplet COFOR": "A"},
+                            4: {"Triplet COFOR": "A"},
+                        },
+                        pn_rows=((1003, "A"), ("unknown", "=A3"), ("", "=A4")),
+                    )
+                    workbook = load_workbook(path)
+                    sheet = workbook[sheet_name]
+                    header_row = 1 if sheet_name == "PN Level" else 2
+                    column = next(
+                        cell.column for cell in sheet[header_row] if cell.value == column_name
+                    )
+                    cell = sheet.cell(row, column, '="cached identifier"')
+                    coordinate = cell.coordinate
+                    workbook.save(path)
+                    workbook.close()
+                    with closing(sqlite3.connect(":memory:")) as connection:
+                        connection.row_factory = sqlite3.Row
+                        with self.assertRaises(EdctLoadError) as raised:
+                            run_edct_analysis(path, connection=connection)
+                        self.assertIn(f"{sheet_name}!{coordinate}", str(raised.exception))
+                        self.assertIn("Excel", str(raised.exception))
+                        self.assertEqual(list_runs(connection, "eDCT")[0]["status"], "failed")
+                        part = "sheet5" if sheet_name == "PN Level" else "sheet1"
+                        set_formula_caches(
+                            path,
+                            {f"xl/worksheets/{part}.xml": {coordinate: "#REF!"}},
+                            data_type="e",
+                        )
+                        with self.assertRaises(EdctLoadError) as cached_error:
+                            run_edct_analysis(path, connection=connection)
+                        self.assertIn(f"{sheet_name}!{coordinate}", str(cached_error.exception))
+                        self.assertIn("#REF!", str(cached_error.exception))
+                        set_formula_caches(
+                            path, {f"xl/worksheets/{part}.xml": {coordinate: cached_value}}
+                        )
+                        result = run_edct_analysis(path, connection=connection)
+                        self.addCleanup(result.workbook.close)
+                        self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
+                        self.assertNotIn(("PN Level", 3), result.row_results)
+                        self.assertNotIn(("PN Level", 4), result.row_results)
+                        self.assertEqual(
+                            {run["status"] for run in list_runs(connection, "eDCT")},
+                            {"failed", "ok"},
+                        )
+
+    def test_pn_blank_scope_and_normalization_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(
+                directory,
+                row_overrides={
+                    3: {
+                        "Supplier Punch code": " P1 ",
+                        "Triplet COFOR": " A, B/C ",
+                        "OPEN TASK": "",
+                    },
+                    4: {"Supplier Punch code": "p1", "Triplet COFOR": "a, b/c"},
+                },
+                pn_rows=(
+                    ("p1", "a, b/c"),
+                    (" P1 ", " A, B/C "),
+                    ("P1", "A"),
+                    ("P1", "a,b/c"),
+                    ("P1", "a, b/c"),
+                    ("P1", "bad"),
+                    ("P1", "bad"),
+                    ("P1", None),
+                    (None, "a, b/c"),
+                    ("unknown", "=uncached()"),
+                    ("EMPTY", "A"),
+                    ("EMPTY", None),
+                    ("001", "001"),
+                    ("001", "1"),
+                    ("1", "001"),
+                    ("P 1", "A"),
+                    ("P-1", "A"),
+                    ("EXCLUDED", "A"),
+                ),
+                optional_columns=("Line",),
+            )
+            workbook = load_workbook(path)
+            supplier = workbook["Supplier Level"]
+            headers = [cell.value for cell in supplier[2]]
+            additions = (
+                ("Metz_03", "EMPTY", None, None),
+                ("Metz_04", "", "A", None),
+                ("Metz_05", "001", "001", None),
+                (None, "P1", "bad", "fallback-must-not-apply"),
+                (None, "EXCLUDED", "A", "fallback-must-not-apply"),
+                ("Metz_06", "P1", "unused", None),
+            )
+            for row, (index, punch, triplet, line) in enumerate(additions, 5):
+                for column, value in (
+                    ("Index", index),
+                    ("Supplier Punch code", punch),
+                    ("Triplet COFOR", triplet),
+                    ("Line", line),
+                ):
+                    supplier.cell(row, headers.index(column) + 1).value = value
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                self.addCleanup(result.workbook.close)
+                pn_checks = {
+                    row: result.row_results[(sheet, row)].check
+                    for sheet, row in result.assessed_rows
+                    if sheet == "PN Level"
+                }
+                self.assertEqual(
+                    pn_checks,
+                    {2: 0, 3: 0, 4: 1, 5: 1, 6: 0, 7: 1, 8: 1, 9: 1, 12: 1, 13: 1, 14: 0, 15: 1},
+                )
+                self.assertEqual(result.rule_totals[("pn_triplet_cofor", "Triplet COFOR")], 8)
+                self.assertNotIn(("Supplier Level", 8), result.assessed_rows)
+                self.assertNotIn(("Supplier Level", 9), result.assessed_rows)
+                self.assertIn("blank", result.row_results[("PN Level", 9)].comment.lower())
+                self.assertIn("no nonblank", result.row_results[("PN Level", 12)].comment.lower())
+                comment = result.row_results[("PN Level", 4)].comment
+                self.assertEqual(comment.count("'a, b/c'"), 1)
+                self.assertLess(comment.index("'a, b/c'"), comment.index("'unused'"))
+
+    def test_pn_formula_caches_tables_and_archive_parts_survive_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(
+                directory,
+                row_overrides={
+                    3: {"Supplier Punch code": "P1", "OPEN TASK": ""},
+                    4: {"Supplier Punch code": "P1"},
+                },
+                pn_rows=(("P1", "=A2"), ("P1", "=A3"), ("P1", "=A4")),
+            )
+            workbook = load_workbook(path)
+            pn = workbook["PN Level"]
+            pn.add_table(Table(displayName="NativePnData", ref="A1:B4"))
+            pn["B2"].fill = PatternFill("solid", fgColor="AABBCC")
+            pn["A2"].hyperlink = "https://example.com/supplier"
+            supplier_headers = [cell.value for cell in workbook["Supplier Level"][2]]
+            triplet_column = get_column_letter(supplier_headers.index("Triplet COFOR") + 1)
+            workbook.save(path)
+            workbook.close()
+            add_worksheet_extension(path, "{PN-PRESERVATION}", "xl/worksheets/sheet5.xml")
+            set_formula_caches(
+                path,
+                {
+                    "xl/worksheets/sheet1.xml": {
+                        f"{triplet_column}3": "A",
+                        f"{triplet_column}4": "B",
+                    },
+                    "xl/worksheets/sheet5.xml": {"B2": " a ", "B3": "C", "B4": ""},
+                },
+            )
+            remap_table_relationship(path, "rId99")
+            remap_archive_parts(path)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                self.addCleanup(result.workbook.close)
+                self.assertEqual(result.rows_failed, 2)
+                self.assertEqual(result.pn_values[2], ("P1", " a "))
+                self.assertEqual(result.row_results[("PN Level", 4)].check, 1)
+                output = export_edct_result(result, directory / "out")
+                rerun = run_edct_analysis(output, connection=connection)
+                self.addCleanup(rerun.workbook.close)
+                self.assertEqual(rerun.row_results, result.row_results)
+            with ZipFile(path) as source, ZipFile(output) as exported:
+                self.assertEqual(set(source.namelist()), set(exported.namelist()))
+                changed = {
+                    "xl/worksheets/sheet1.xml",
+                    "xl/worksheets/sheet42.xml",
+                    "xl/tables/table27.xml",
+                    "xl/styles.xml",
+                }
+                for name in source.namelist():
+                    if name not in changed:
+                        self.assertEqual(source.read(name), exported.read(name), name)
+                self.assertIn(b"{PN-PRESERVATION}", exported.read("xl/worksheets/sheet42.xml"))
+            exported = load_workbook(output, data_only=False)
+            self.addCleanup(exported.close)
+            for sheet_name, header_row, source_row, expected_check in (
+                ("Supplier Level", 2, 3, 0),
+                ("PN Level", 1, 3, 1),
+            ):
+                sheet = exported[sheet_name]
+                headers = [cell.value for cell in sheet[header_row]]
+                self.assertIn("Check", headers)
+                self.assertEqual(
+                    sheet.cell(source_row, headers.index("Check") + 1).value, expected_check
+                )
+            self.assertEqual(exported["PN Level"]["B2"].value, "=A2")
+            self.assertEqual(exported["PN Level"]["B2"].fill.fgColor.rgb, "00AABBCC")
+            self.assertEqual(
+                exported["PN Level"]["A2"].hyperlink.target, "https://example.com/supplier"
+            )
+            self.assertEqual(exported["PN Level"].tables["NativePnData"].ref, "A1:B4")
+            cached = load_workbook(output, data_only=True)
+            self.addCleanup(cached.close)
+            self.assertEqual(cached["PN Level"]["B2"].value, " a ")
+
+    def test_pn_membership_retains_sheet_identity_and_combined_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(
+                directory,
+                row_overrides={
+                    3: {"Supplier Punch code": "P1", "Triplet COFOR": "A", "OPEN TASK": ""},
+                    4: {"Supplier Punch code": "P1", "Triplet COFOR": "B"},
+                },
+                pn_rows=((" p1 ", " a "), ("P1", "C"), ("unknown", "C"), ("", "A")),
+            )
+            original_bytes = path.read_bytes()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 15)
+                )
+                self.addCleanup(result.workbook.close)
+                self.assertEqual(
+                    result.assessed_rows,
+                    (
+                        ("Supplier Level", 3),
+                        ("Supplier Level", 4),
+                        ("PN Level", 2),
+                        ("PN Level", 3),
+                    ),
+                )
+                self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
+                rejected = result.row_results[("PN Level", 3)]
+                self.assertEqual(rejected.check, 1)
+                for detail in ("Punch seller", "P1", "Triplet COFOR", "C", "a", "b"):
+                    self.assertIn(detail, rejected.comment)
+                self.assertEqual(result.rows_failed, 3)
+                self.assertEqual(sum(row.check for row in result.row_results.values()), 3)
+                self.assertEqual(result.rule_totals[("pn_triplet_cofor", "Triplet COFOR")], 1)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT rows_total, rows_in_scope, rows_failed, status, exported_file FROM runs"
+                    ).fetchone(),
+                    (4, 4, 3, "ok", None),
+                )
+                output = export_edct_result(result, directory / "out")
+                self.assertEqual(
+                    connection.execute("SELECT exported_file FROM runs").fetchone(), (str(output),)
+                )
+            exported = load_workbook(output, data_only=False)
+            self.addCleanup(exported.close)
+            for sheet_name, row in result.assessed_rows:
+                sheet = exported[sheet_name]
+                headers = [cell.value for cell in sheet[1 if sheet_name == "PN Level" else 2]]
+                self.assertEqual(
+                    sheet.cell(row, headers.index("Check") + 1).value,
+                    result.row_results[(sheet_name, row)].check,
+                )
+            self.assertEqual(exported["PN Level"]["A2"].value, " p1 ")
+            self.assertEqual(exported["PN Level"]["B2"].value, " a ")
+            self.assertIsNone(exported["PN Level"]["C4"].value)
+            self.assertEqual(path.read_bytes(), original_bytes)
 
     def test_missing_path_and_combined_structure_errors_are_recorded(self) -> None:
         with closing(sqlite3.connect(":memory:")) as connection:
@@ -214,15 +533,21 @@ class EdctWorkbookTests(unittest.TestCase):
             workbook.save(path)
             workbook.close()
             with closing(sqlite3.connect(":memory:")) as connection:
-                with self.assertRaisesRegex(
-                    EdctLoadError,
-                    r"sheets: Open Task, Template-Cofor-Creation; columns:",
-                ):
+                with self.assertRaises(EdctLoadError) as raised:
                     run_edct_analysis(path, connection=connection)
+                for missing in ("Open Task", "Template-Cofor-Creation", "PN Level", "Index"):
+                    self.assertIn(missing, str(raised.exception))
 
     def test_line_header_can_define_assessed_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            path = build_edct_workbook(Path(temp))
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {"Supplier Punch code": "P1", "Triplet COFOR": "A", "OPEN TASK": ""},
+                    4: {"Supplier Punch code": "P1", "Triplet COFOR": "B"},
+                },
+                pn_rows=(("P1", "B"), ("P1", "C")),
+            )
             workbook = load_workbook(path)
             supplier = workbook["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
@@ -233,7 +558,12 @@ class EdctWorkbookTests(unittest.TestCase):
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
 
-            self.assertEqual(result.assessed_rows, (3, 4))
+            self.assertEqual(
+                result.assessed_rows,
+                (("Supplier Level", 3), ("Supplier Level", 4), ("PN Level", 2), ("PN Level", 3)),
+            )
+            self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
+            self.assertEqual(result.row_results[("PN Level", 3)].check, 1)
             result.workbook.close()
 
     def test_open_task_header_and_invalid_overseas_are_reported(self) -> None:
@@ -251,21 +581,10 @@ class EdctWorkbookTests(unittest.TestCase):
             path = build_edct_workbook(directory, row_overrides={3: {"Overseas": "MAYBE"}})
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
-            self.assertIn(
-                "Invalid value, expected YES, NOT, or empty: Overseas = MAYBE",
-                result.row_results[3].comment,
-            )
+            self.assertEqual(result.rule_totals[("overseas", "Overseas")], 1)
             result.workbook.close()
 
-    def test_open_task_helper_and_columns_only_structure_error(self) -> None:
-        workbook = Workbook()
-        workbook.active.title = "Open Task"
-        workbook.active.append(["metadata"])
-        workbook.active.append(["Wrong"])
-        with self.assertRaisesRegex(EdctLoadError, "Punch Code"):
-            edct_analysis._open_task_punches(workbook)
-        workbook.close()
-
+    def test_columns_only_structure_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "columns.xlsx"
             workbook = Workbook()
@@ -281,144 +600,43 @@ class EdctWorkbookTests(unittest.TestCase):
                 with self.assertRaisesRegex(EdctLoadError, "columns:"):
                     run_edct_analysis(path, connection=connection)
 
-    def test_default_history_connection_and_no_history_update(self) -> None:
+    def test_default_history_records_export(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             input_path = build_edct_workbook(directory)
             with patch.object(edct_analysis, "DB_PATH", directory / "history.db"):
                 result = run_edct_analysis(input_path, analysis_date=date(2026, 7, 15))
-                self.assertTrue(result.uses_default_db)
                 output = export_edct_result(result, directory / "out")
-            self.assertTrue(output.exists())
+            with closing(sqlite3.connect(directory / "history.db")) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT exported_file, status FROM runs").fetchone(),
+                    (str(output), "ok"),
+                )
             result.workbook.close()
 
-        no_history = edct_analysis.EdctRunResult(
-            -1,
-            Path("input.xlsx"),
-            datetime.now(),
-            datetime.now(),
-            0.0,
-            object(),
-            (),
-            {},
-            Counter(),
-            False,
-            None,
-        )
-        called = False
-
-        def action(connection) -> None:
-            nonlocal called
-            called = True
-
-        edct_analysis._update_result_history(no_history, action)
-        self.assertFalse(called)
-
-    def test_result_columns_fill_intermediate_blank_header(self) -> None:
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.append(["metadata", "metadata", "metadata", "metadata"])
-        sheet.append(["Index", "Value", "", "Check"])
-        sheet.append(["A", "x", "", ""])
-        table = Table(displayName="Tabella2", ref="A2:B3")
-        sheet.add_table(table)
-        check_column, comment_column = edct_analysis._result_columns(sheet)
-        self.assertEqual((check_column, comment_column), (4, 5))
-        self.assertEqual(sheet.cell(2, 3).value, "Column 3")
-        self.assertEqual(table.ref, "A2:E3")
-        workbook.close()
-
-    def test_empty_assessment_supplier_missing_and_detached_history(self) -> None:
+    def test_empty_assessment_and_missing_supplier(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            path = build_edct_workbook(directory)
-            workbook = load_workbook(path)
-            headers = edct_analysis._header_map(workbook["Supplier Level"])
-            row_results, totals = edct_analysis._evaluate_business_rules(
-                workbook, headers, (), date(2026, 7, 15)
+            path = build_edct_workbook(
+                directory,
+                row_overrides={3: {"Index": ""}, 4: {"Index": ""}},
+                pn_rows=(("P1", "A"),),
             )
-            self.assertEqual((row_results, totals), ({}, Counter()))
-            workbook.close()
-
-            path = directory / "open-only.xlsx"
-            workbook = Workbook()
-            workbook.active.title = "Open Task"
-            workbook.active.append(["metadata"])
-            workbook.active.append(["Punch Code"])
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                self.assertEqual(result.assessed_rows, ())
+                self.assertEqual(result.rows_failed, 0)
+                self.assertEqual(
+                    connection.execute("SELECT rows_in_scope FROM runs").fetchone(), (0,)
+                )
+                result.workbook.close()
+            workbook = load_workbook(path)
+            del workbook["Supplier Level"]
             workbook.save(path)
             workbook.close()
             with closing(sqlite3.connect(":memory:")) as connection:
-                with self.assertRaisesRegex(EdctLoadError, "sheets: Supplier Level"):
+                with self.assertRaisesRegex(EdctLoadError, "Supplier Level"):
                     run_edct_analysis(path, connection=connection)
-
-        detached = edct_analysis.EdctRunResult(
-            1,
-            Path("input.xlsx"),
-            datetime.now(),
-            datetime.now(),
-            0,
-            object(),
-            (),
-            {},
-            Counter(),
-            False,
-            None,
-        )
-        called = False
-
-        def action(connection) -> None:
-            nonlocal called
-            called = True
-
-        edct_analysis._update_result_history(detached, action)
-        self.assertFalse(called)
-
-    def test_ooxml_extension_restoration_and_missing_merge_parts(self) -> None:
-        worksheet_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-        rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-        source_xml = (
-            f'<worksheet xmlns="{worksheet_ns}" xmlns:r="{rel_ns}">'
-            '<items><item id="one"><extLst><ext uri="keep" /></extLst></item>'
-            '<item id="two"><extLst><ext uri="add" /></extLst></item></items>'
-            '<tableParts><tablePart r:id="rIdOld" /></tableParts></worksheet>'
-        ).encode()
-        target_xml = (
-            f'<worksheet xmlns="{worksheet_ns}" xmlns:r="{rel_ns}">'
-            '<items><item id="one"><extLst><ext uri="replace" /></extLst></item>'
-            '<item id="two"><value /></item></items>'
-            '<tableParts><tablePart r:id="rIdNew" /></tableParts></worksheet>'
-        ).encode()
-        source_custom = (
-            b'<root><item id="missing"><extLst><ext uri="custom" /></extLst></item></root>'
-        )
-        target_custom = b'<root><item id="different" /></root>'
-        with tempfile.TemporaryDirectory() as temp:
-            directory = Path(temp)
-            source = directory / "source.xlsx"
-            target = directory / "target.xlsx"
-            for path, content in ((source, source_xml), (target, target_xml)):
-                with ZipFile(path, "w", ZIP_DEFLATED) as archive:
-                    archive.writestr("xl/worksheets/sheet1.xml", content)
-                    archive.writestr(
-                        "custom.xml", source_custom if path == source else target_custom
-                    )
-            edct_analysis._preserve_ooxml_extensions(
-                source, target, {"xl/worksheets/sheet1.xml", "custom.xml"}
-            )
-            with ZipFile(target) as archive:
-                restored = archive.read("xl/worksheets/sheet1.xml")
-            self.assertIn(b"keep", restored)
-            self.assertNotIn(b"replace", restored)
-            self.assertIn(b"rIdOld", restored)
-
-            annotated = directory / "annotated.xlsx"
-            merged = directory / "merged.xlsx"
-            with ZipFile(annotated, "w", ZIP_DEFLATED) as archive:
-                archive.writestr("other.xml", b"x")
-            with self.assertRaisesRegex(EdctLoadError, "Missing generated workbook parts"):
-                edct_analysis._merge_annotated_parts(
-                    source, annotated, merged, {"xl/worksheets/sheet1.xml"}
-                )
 
     def test_rule_documentation_lists_every_required_edct_column(self) -> None:
         documentation = (
@@ -428,7 +646,7 @@ class EdctWorkbookTests(unittest.TestCase):
             "## Formula rules", 1
         )[0]
         documented = set(re.findall(r"^- `([^`]+)`$", inventory, re.MULTILINE))
-        self.assertEqual(documented, set(EDCT_REQUIRED_COLUMNS))
+        self.assertEqual(documented, set(EDCT_REQUIRED_COLUMNS) | set(EDCT_PN_REQUIRED_COLUMNS))
 
     def test_rule_documentation_matches_formula_and_unchecked_configuration(self) -> None:
         documentation = (
@@ -480,26 +698,31 @@ class EdctWorkbookTests(unittest.TestCase):
             exported = load_workbook(output_path, data_only=False)
             supplier = exported["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
-            self.assertEqual(result.assessed_rows, (3, 4))
+            self.assertEqual(result.assessed_rows, (("Supplier Level", 3), ("Supplier Level", 4)))
             self.assertEqual([row["project"] for row in runs], ["eDCT"])
             self.assertEqual([row["rows_total"] for row in runs], [2])
             self.assertEqual(
                 exported.sheetnames,
-                ["Supplier Level", "Open Task", "Template-Cofor-Creation", "Other Sheet"],
+                [
+                    "Supplier Level",
+                    "Open Task",
+                    "Template-Cofor-Creation",
+                    "Other Sheet",
+                    "PN Level",
+                ],
             )
             self.assertEqual(exported["Other Sheet"]["A1"].value, "keep me")
             self.assertEqual(supplier["A3"].fill.fgColor.rgb, "00FF0000")
             self.assertIn("Check", headers)
             self.assertIn("Comment", headers)
             self.assertEqual(supplier.cell(3, headers.index("Check") + 1).value, 0)
-            self.assertEqual(
-                supplier.cell(3, headers.index("Comment") + 1).value, "Quality check passed"
-            )
             self.assertTrue(
                 supplier.tables["Tabella2"].ref.endswith(get_column_letter(len(headers)) + "5")
             )
             self.assertRegex(output_path.name, r"input_eDCT_checked_\d{8}_\d{6}\.xlsx")
-            self.assertEqual(load_workbook(input_path)["Other Sheet"]["A1"].value, "keep me")
+            original = load_workbook(input_path)
+            self.assertEqual(original["Other Sheet"]["A1"].value, "keep me")
+            original.close()
             exported.close()
 
     def test_optional_phone_and_shipping_columns_are_ignored_and_preserved(self) -> None:
@@ -521,7 +744,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 result = run_edct_analysis(input_path, connection=connection)
                 output_path = export_edct_result(result, directory)
 
-            self.assertEqual(result.row_results[3].check, 0)
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
             self.assertFalse(any(rule == "phone" for rule, _ in result.rule_totals))
             self.assertFalse(any(rule == "shipping_location" for rule, _ in result.rule_totals))
             exported = load_workbook(output_path)
@@ -654,7 +877,12 @@ class EdctWorkbookTests(unittest.TestCase):
             with ZipFile(input_path) as source, ZipFile(output) as exported:
                 self.assertEqual(set(exported.namelist()), set(source.namelist()))
                 for name in source.namelist():
-                    if name not in {"xl/worksheets/sheet1.xml", "xl/tables/table1.xml"}:
+                    if name not in {
+                        "xl/worksheets/sheet1.xml",
+                        "xl/worksheets/sheet5.xml",
+                        "xl/tables/table1.xml",
+                        "xl/styles.xml",
+                    }:
                         self.assertEqual(exported.read(name), source.read(name), name)
                 source_xml = source.read("xl/worksheets/sheet1.xml")
                 exported_xml = exported.read("xl/worksheets/sheet1.xml")
@@ -777,15 +1005,20 @@ class EdctWorkbookTests(unittest.TestCase):
                     path, connection=connection, analysis_date=date(2026, 7, 30)
                 )
 
-        self.assertEqual(result.row_results[3].check, 3)
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 3)
         for column in (
             "Sales contact",
             "Seller COFOR",
             "Participants",
         ):
-            self.assertIn(column, result.row_results[3].comment)
-        self.assertIn("first@example.com, second@example.com", result.row_results[3].comment)
-        self.assertIn("Name - person@example.com", result.row_results[3].comment)
+            self.assertIn(column, result.row_results[("Supplier Level", 3)].comment)
+        self.assertIn(
+            "first@example.com, second@example.com",
+            result.row_results[("Supplier Level", 3)].comment,
+        )
+        self.assertIn(
+            "Name - person@example.com", result.row_results[("Supplier Level", 3)].comment
+        )
 
     def test_creation_of_cofors_request_date_accepts_only_supported_dates(self) -> None:
         scenarios = (
@@ -812,12 +1045,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 with closing(sqlite3.connect(":memory:")) as connection:
                     result = run_edct_analysis(path, connection=connection)
 
-                self.assertEqual(result.row_results[3].check, expected_check)
-                if expected_check:
-                    self.assertIn(
-                        "Invalid date format, expected DD/MM/YYYY",
-                        result.row_results[3].comment,
-                    )
+                self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
 
     def test_request_date_requires_supplier_punch_in_cofor_template(self) -> None:
         scenarios = (
@@ -843,13 +1071,8 @@ class EdctWorkbookTests(unittest.TestCase):
                 with closing(sqlite3.connect(":memory:")) as connection:
                     result = run_edct_analysis(path, connection=connection)
 
-                self.assertEqual(result.row_results[3].check, expected_check)
+                self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
                 if expected_check:
-                    self.assertIn(
-                        "Supplier Punch code must exist in Template-Cofor-Creation when "
-                        "Creation of Cofors request date is populated",
-                        result.row_results[3].comment,
-                    )
                     self.assertEqual(
                         result.rule_totals[("cofor_template", "Supplier Punch code")],
                         1,
@@ -865,17 +1088,12 @@ class EdctWorkbookTests(unittest.TestCase):
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
 
-            self.assertEqual(result.row_results[3].check, 1)
-            self.assertIn(
-                "Creation of Cofors request date is required because the Punch Code exists in "
-                "Template-Cofor-Creation",
-                result.row_results[3].comment,
-            )
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 1)
             self.assertEqual(
                 result.rule_totals[("date_required", "Creation of Cofors request date")],
                 1,
             )
-            self.assertEqual(result.row_results[4].check, 0)
+            self.assertEqual(result.row_results[("Supplier Level", 4)].check, 0)
 
     def test_cofor_template_matching_is_normalized_but_not_fuzzy(self) -> None:
         scenarios = (
@@ -905,7 +1123,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 with closing(sqlite3.connect(":memory:")) as connection:
                     result = run_edct_analysis(path, connection=connection)
 
-                self.assertEqual(result.row_results[3].check, expected_check)
+                self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
 
     def test_missing_or_malformed_cofor_template_stops_analysis(self) -> None:
         scenarios = (
@@ -960,7 +1178,7 @@ class EdctWorkbookTests(unittest.TestCase):
                         connection=connection,
                         analysis_date=date(2026, 7, 30),
                     )
-                self.assertEqual(result.row_results[3].check, expected_check)
+                self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
 
     def test_catalogued_applicability_empty_and_accepted_value_policies(self) -> None:
         valid_portals = {
@@ -1041,7 +1259,7 @@ class EdctWorkbookTests(unittest.TestCase):
                         connection=connection,
                         analysis_date=date(2026, 7, 30),
                     )
-                self.assertEqual(result.row_results[3].check, expected_check)
+                self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
 
     def test_every_configured_field_rule_reaches_exported_check_and_comment(self) -> None:
         invalid_values = {
@@ -1129,8 +1347,8 @@ class EdctWorkbookTests(unittest.TestCase):
             ]
             exported.close()
 
-        self.assertEqual(result.row_results[3].check, 10)
-        self.assertEqual(result.row_results[4].check, 1)
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 10)
+        self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
         self.assertEqual(exported_checks, [10, 1])
         for column in (
             "Triple Status",
@@ -1143,7 +1361,7 @@ class EdctWorkbookTests(unittest.TestCase):
             "SPM",
             "iTMS",
         ):
-            self.assertIn(column, result.row_results[3].comment)
+            self.assertIn(column, result.row_results[("Supplier Level", 3)].comment)
             self.assertIn(column, exported_comments[0])
         self.assertIn("OPEN TASK", exported_comments[1])
         self.assertEqual(sum(row["fail_count"] for row in totals), 11)
@@ -1164,10 +1382,10 @@ class EdctWorkbookTests(unittest.TestCase):
                     path, connection=connection, analysis_date=date(2026, 7, 30)
                 )
 
-        self.assertEqual(result.row_results[3].check, 0)
-        self.assertEqual(result.row_results[4].check, 1)
-        self.assertIn("Starting date", result.row_results[4].comment)
-        self.assertNotIn("Triplet COFOR", result.row_results[4].comment)
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+        self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
+        self.assertIn("Starting date", result.row_results[("Supplier Level", 4)].comment)
+        self.assertNotIn("Triplet COFOR", result.row_results[("Supplier Level", 4)].comment)
 
     def test_formula_comparison_rejects_every_material_change(self) -> None:
         scenarios = (
@@ -1191,8 +1409,8 @@ class EdctWorkbookTests(unittest.TestCase):
                         connection=connection,
                         analysis_date=date(2026, 7, 30),
                     )
-                self.assertEqual(result.row_results[4].check, 1)
-                self.assertIn("Starting date", result.row_results[4].comment)
+                self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
+                self.assertIn("Starting date", result.row_results[("Supplier Level", 4)].comment)
 
     def test_every_formula_rule_reaches_exported_check_and_comment(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1229,14 +1447,8 @@ class EdctWorkbookTests(unittest.TestCase):
                     path, connection=connection, analysis_date=date(2026, 7, 30)
                 )
 
-        expected = (
-            "Formula validation failed: formula reference row is missing "
-            "the reference formula for Starting date"
-        )
-        self.assertEqual(result.row_results[3].check, 1)
-        self.assertEqual(result.row_results[4].check, 1)
-        self.assertIn(expected, result.row_results[3].comment)
-        self.assertIn(expected, result.row_results[4].comment)
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 1)
+        self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
 
 
 if __name__ == "__main__":

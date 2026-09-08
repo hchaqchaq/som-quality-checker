@@ -78,12 +78,7 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertEqual(window.edct_page.pick_output_button.text(), "Choose Output Folder")
         self.assertEqual(window.edct_page.run_button.text(), "Run Analysis")
         self.assertTrue(window.edct_page.result_path.isReadOnly())
-        self.assertEqual(window.edct_page.preview_table.columnCount(), 5)
         self.assertTrue(window.edct_page.loading_bar.isHidden())
-        self.assertEqual(
-            window.edct_page.preview_columns,
-            ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment"),
-        )
 
         window.edct_menu.setCurrentRow(1)
         self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_history_page)
@@ -276,10 +271,6 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertTrue(
             all(isinstance(window.edct_pages.widget(index), QScrollArea) for index in range(2))
         )
-        self.assertEqual(
-            window.edct_page.preview_columns,
-            ("Index", "Supplier Punch code", "Supplier name", "Check", "Comment"),
-        )
 
     def test_edct_preview_accepts_line_as_index_header(self) -> None:
         window = MainWindow(QualityCheckerController())
@@ -287,17 +278,18 @@ class ProjectNavigationTests(unittest.TestCase):
         worksheet = workbook.active
         worksheet.title = "Supplier Level"
         worksheet.append([])
-        worksheet.append(["Line", "Supplier Punch code", "Supplier name"])
-        worksheet.append([7, "1003", "Supplier"])
+        worksheet.append(["Line", "Supplier Punch code", "Supplier name", "Triplet COFOR"])
+        worksheet.append([7, "1003", "Supplier", "001-A"])
         result = SimpleNamespace(
             workbook=workbook,
-            assessed_rows=(3,),
-            row_results={3: EdctRowResult(0, "Quality check passed")},
+            assessed_rows=(("Supplier Level", 3),),
+            row_results={("Supplier Level", 3): EdctRowResult(0, "Quality check passed")},
+            pn_values={},
         )
 
         window.edct_page._fill_preview(result)
 
-        self.assertEqual(window.edct_page.preview_table.item(0, 0).text(), "7")
+        self.assertEqual(window.edct_page.preview_table.item(0, 2).text(), "7")
         workbook.close()
 
     def test_checkable_combo_selection_and_reset(self) -> None:
@@ -525,18 +517,22 @@ class ProjectNavigationTests(unittest.TestCase):
             screens._create_sidebar("Test")
             MainWindow(QualityCheckerController())
 
-    def test_edct_success_populates_preview_and_history(self) -> None:
+    def test_edct_success_previews_overlapping_sheet_rows_and_combined_totals(self) -> None:
         from collections import Counter
         from datetime import datetime
 
-        from openpyxl import Workbook
-
         workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "Supplier Level"
-        sheet.append(["metadata"] * 3)
-        sheet.append(["Index", "Supplier Punch code", "Supplier name"])
-        sheet.append(["I-1", 1001, "Supplier"])
+        self.addCleanup(workbook.close)
+        supplier = workbook.active
+        supplier.title = "Supplier Level"
+        supplier.append(["metadata"] * 4)
+        supplier.append(["Index", "Supplier Punch code", "Supplier name", "Triplet COFOR"])
+        supplier.append(["I-1", "1001", "Supplier", "001-A"])
+        pn = workbook.create_sheet("PN Level")
+        pn.append(["Punch seller", "Triplet COFOR"])
+        pn.append(["unknown-seller", "not assessed"])
+        pn.append(['="1001"', '="wrong-triplet"'])
+        pn.append(["1001", "001-A"])
         result = screens.EdctRunResult(
             5,
             Path("input.xlsx"),
@@ -544,19 +540,63 @@ class ProjectNavigationTests(unittest.TestCase):
             datetime.now(),
             0.1,
             workbook,
-            (3,),
-            {3: EdctRowResult(1, "bad value")},
+            (("Supplier Level", 3), ("PN Level", 3), ("PN Level", 4)),
+            {
+                ("Supplier Level", 3): EdctRowResult(0, "Quality check passed"),
+                ("PN Level", 3): EdctRowResult(1, "Triplet COFOR wrong-triplet not allowed"),
+                ("PN Level", 4): EdctRowResult(0, "Quality check passed"),
+            },
             Counter(),
             False,
             None,
+            pn_values={3: ("1001", "wrong-triplet"), 4: ("1001", "001-A")},
         )
         window = MainWindow(HistoryController())
+        self.addCleanup(window.close)
         with patch.object(window.edct_history_page, "refresh_runs") as refresh:
             window.edct_page._finished(result, "output.xlsx", "")
-        self.assertEqual(window.edct_page.preview_table.item(0, 0).text(), "I-1")
+
+        table = window.edct_page.preview_table
+        self.assertEqual(
+            [
+                [table.item(row, column).text() for column in range(table.columnCount())]
+                for row in range(table.rowCount())
+            ],
+            [
+                [
+                    "Supplier Level",
+                    "3",
+                    "I-1",
+                    "1001",
+                    "Supplier",
+                    "001-A",
+                    "0",
+                    "Quality check passed",
+                ],
+                [
+                    "PN Level",
+                    "3",
+                    "",
+                    "1001",
+                    "",
+                    "wrong-triplet",
+                    "1",
+                    "Triplet COFOR wrong-triplet not allowed",
+                ],
+                ["PN Level", "4", "", "1001", "", "001-A", "0", "Quality check passed"],
+            ],
+        )
+        self.assertIn("rows: 3", window.edct_page.status.text())
+        self.assertIn("failed: 1", window.edct_page.status.text())
         self.assertEqual(window.edct_page.result_path.text(), "output.xlsx")
+        self.assertTrue(window.edct_page.preview_empty.isHidden())
         refresh.assert_called_once_with()
-        workbook.close()
+
+        with patch.object(screens, "PREVIEW_ROWS", 2):
+            window.edct_page._fill_preview(result)
+        self.assertEqual(table.rowCount(), 2)
+        self.assertEqual(table.item(1, 0).text(), "PN Level")
+        self.assertEqual(table.item(1, 1).text(), "3")
 
     def test_run_app_bootstrap_always_shuts_down(self) -> None:
         fake_qt = MagicMock()

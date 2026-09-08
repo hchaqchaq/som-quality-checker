@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
+from posixpath import basename, dirname, normpath
 from tempfile import NamedTemporaryFile
 from time import perf_counter
 from xml.etree import ElementTree
@@ -43,6 +44,10 @@ from .config import (
     EDCT_HEADER_ROW,
     EDCT_INDEX_COLUMN,
     EDCT_INDEX_COLUMNS,
+    EDCT_PN_HEADER_ROW,
+    EDCT_PN_REQUIRED_COLUMNS,
+    EDCT_PN_SELLER_COLUMN,
+    EDCT_PN_SHEET,
     EDCT_PORTAL_COLUMNS,
     EDCT_PORTAL_VALUES,
     EDCT_PROJECT,
@@ -73,11 +78,12 @@ class EdctRunResult:
     finished_at: datetime
     duration_s: float
     workbook: Workbook
-    assessed_rows: tuple[int, ...]
-    row_results: dict[int, EdctRowResult]
+    assessed_rows: tuple[tuple[str, int], ...]
+    row_results: dict[tuple[str, int], EdctRowResult]
     rule_totals: Counter[tuple[str, str]]
     uses_default_db: bool
     history_connection: sqlite3.Connection | None
+    pn_values: dict[int, tuple[object, object]]
 
     @property
     def rows_failed(self) -> int:
@@ -339,6 +345,144 @@ def _header_map(worksheet, row: int = EDCT_HEADER_ROW) -> dict[str, int]:
     }
 
 
+def _worksheet_parts(archive: ZipFile) -> dict[str, str]:
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    relationship_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    relationships = {
+        element.attrib["Id"]: element.attrib["Target"]
+        for element in ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    }
+    root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+    return {
+        sheet.attrib["name"]: normpath("xl/" + relationships[sheet.attrib[relationship_id]]).lstrip(
+            "/"
+        )
+        if not relationships[sheet.attrib[relationship_id]].startswith("/")
+        else relationships[sheet.attrib[relationship_id]].lstrip("/")
+        for sheet in root.findall(f"{{{namespace}}}sheets/{{{namespace}}}sheet")
+    }
+
+
+def _table_part(archive: ZipFile, worksheet_part: str, table_name: str) -> str:
+    relationships_part = f"{dirname(worksheet_part)}/_rels/{basename(worksheet_part)}.rels"
+    relationships = ElementTree.fromstring(archive.read(relationships_part))
+    for relationship in relationships:
+        if not relationship.attrib["Type"].endswith("/table"):
+            continue
+        target = relationship.attrib["Target"]
+        part = (
+            target.lstrip("/")
+            if target.startswith("/")
+            else normpath(f"{dirname(worksheet_part)}/{target}")
+        )
+        table = ElementTree.fromstring(archive.read(part))
+        if table.attrib.get("displayName") == table_name:
+            return part
+    raise EdctLoadError(f"Missing source table part: {table_name}")
+
+
+def _evaluate_pn_triplets(
+    workbook: Workbook,
+    input_path: Path,
+    supplier_headers: dict[str, int],
+    supplier_rows: tuple[int, ...],
+    pn_headers: dict[str, int],
+) -> tuple[dict[tuple[str, int], EdctRowResult], dict[int, tuple[object, object]]]:
+    pn = workbook[EDCT_PN_SHEET]
+    seller_column = pn_headers[EDCT_PN_SELLER_COLUMN]
+    candidate_rows = [
+        row
+        for row in range(EDCT_PN_HEADER_ROW + 1, pn.max_row + 1)
+        if _normalized_text(pn.cell(row, seller_column).value)
+    ]
+    if not candidate_rows or not supplier_rows:
+        return {}, {}
+
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    empty_cached_formulas: set[tuple[str, str]] = set()
+    with ZipFile(input_path) as archive:
+        parts = _worksheet_parts(archive)
+        for name in ("Supplier Level", EDCT_PN_SHEET):
+            root = ElementTree.fromstring(archive.read(parts[name]))
+            for cell in root.iter(f"{{{namespace}}}c"):
+                cached_value = cell.find(f"{{{namespace}}}v")
+                if (
+                    cell.attrib.get("t") == "str"
+                    and cell.find(f"{{{namespace}}}f") is not None
+                    and cached_value is not None
+                    and cached_value.text is None
+                ):
+                    empty_cached_formulas.add((name, cell.attrib["r"]))
+
+    cached = load_workbook(input_path, data_only=True)
+    try:
+
+        def resolved_value(sheet_name: str, row: int, column: int) -> object:
+            cell = workbook[sheet_name].cell(row, column)
+            if cell.data_type != "f":
+                return cell.value
+            cached_cell = cached[sheet_name].cell(row, column)
+            value = cached_cell.value
+            if value is None or cached_cell.data_type == "e":
+                if value is None and (sheet_name, cell.coordinate) in empty_cached_formulas:
+                    return ""
+                reason = (
+                    f"Cached formula error {value}"
+                    if cached_cell.data_type == "e"
+                    else "Missing cached formula value"
+                )
+                raise EdctLoadError(
+                    f"{reason}: {sheet_name}!{cell.coordinate}. "
+                    "Correct formula errors, recalculate and save the workbook in Excel "
+                    "before analysis."
+                )
+            return value
+
+        sellers = {row: resolved_value(EDCT_PN_SHEET, row, seller_column) for row in candidate_rows}
+        if not any(_normalized_choice(seller) for seller in sellers.values()):
+            return {}, {}
+        allowed_triplets: dict[str, set[str]] = defaultdict(set)
+        for row in supplier_rows:
+            punch = _normalized_choice(
+                resolved_value("Supplier Level", row, supplier_headers["Supplier Punch code"])
+            )
+            if not punch:
+                continue
+            allowed = allowed_triplets[punch]
+            triplet = _normalized_choice(
+                resolved_value("Supplier Level", row, supplier_headers["Triplet COFOR"])
+            )
+            if triplet:
+                allowed.add(triplet)
+
+        row_results: dict[tuple[str, int], EdctRowResult] = {}
+        pn_values: dict[int, tuple[object, object]] = {}
+        for row, seller in sellers.items():
+            punch = _normalized_choice(seller)
+            if not punch or punch not in allowed_triplets:
+                continue
+            triplet_value = resolved_value(EDCT_PN_SHEET, row, pn_headers["Triplet COFOR"])
+            pn_values[row] = (seller, triplet_value)
+            triplet = _normalized_choice(triplet_value)
+            allowed = allowed_triplets[punch]
+            if triplet and triplet in allowed:
+                row_result = EdctRowResult(0, "Quality check passed")
+            else:
+                allowed_display = ", ".join(repr(value) for value in sorted(allowed))
+                allowed_display = allowed_display or "<no nonblank allowed triplets>"
+                rejected = _normalized_text(triplet_value) or "<blank>"
+                row_result = EdctRowResult(
+                    1,
+                    f"Triplet COFOR = {rejected} is not allowed for "
+                    f"{EDCT_PN_SELLER_COLUMN} = {_normalized_text(seller)}; "
+                    f"allowed Triplet COFOR values: {allowed_display}",
+                )
+            row_results[(EDCT_PN_SHEET, row)] = row_result
+        return row_results, pn_values
+    finally:
+        cached.close()
+
+
 def _open_history(connection: sqlite3.Connection | None) -> tuple[sqlite3.Connection, bool]:
     if connection is not None:
         initialize_schema(connection)
@@ -404,6 +548,7 @@ def run_edct_analysis(
         ]
         missing_columns: list[str] = []
         headers: dict[str, int] = {}
+        pn_headers: dict[str, int] = {}
         if "Supplier Level" in workbook.sheetnames:
             headers = _header_map(workbook["Supplier Level"])
             missing_columns.extend(
@@ -413,6 +558,13 @@ def run_edct_analysis(
             )
             if not any(column in headers for column in EDCT_INDEX_COLUMNS):
                 missing_columns.append("Index or Line")
+        if EDCT_PN_SHEET in workbook.sheetnames:
+            pn_headers = _header_map(workbook[EDCT_PN_SHEET], EDCT_PN_HEADER_ROW)
+            missing_columns.extend(
+                f"{EDCT_PN_SHEET}.{column}"
+                for column in EDCT_PN_REQUIRED_COLUMNS
+                if column not in pn_headers
+            )
         if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(
             workbook["Open Task"]
         ):
@@ -441,17 +593,28 @@ def run_edct_analysis(
 
         supplier = workbook["Supplier Level"]
         index_column = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
-        assessed_rows = tuple(
+        supplier_rows = tuple(
             row
             for row in range(EDCT_HEADER_ROW + 1, supplier.max_row + 1)
             if _normalized_text(supplier.cell(row, headers[index_column]).value)
         )
-        row_results, rule_totals = _evaluate_business_rules(
+        pn_results, pn_values = _evaluate_pn_triplets(
+            workbook, resolved_input, headers, supplier_rows, pn_headers
+        )
+        supplier_results, rule_totals = _evaluate_business_rules(
             workbook,
             headers,
-            assessed_rows,
+            supplier_rows,
             analysis_date or date.today(),
         )
+        row_results = {
+            ("Supplier Level", row): row_result for row, row_result in supplier_results.items()
+        }
+        row_results.update(pn_results)
+        pn_failures = sum(row_result.check for row_result in pn_results.values())
+        if pn_failures:
+            rule_totals[("pn_triplet_cofor", "Triplet COFOR")] = pn_failures
+        assessed_rows = tuple(row_results)
         finished_at = datetime.now(UTC)
         duration_s = perf_counter() - started_perf
         run_id = _insert_history(
@@ -478,8 +641,11 @@ def run_edct_analysis(
             rule_totals=rule_totals,
             uses_default_db=own_connection,
             history_connection=None if own_connection else history,
+            pn_values=pn_values,
         )
     except Exception as exc:
+        if "workbook" in locals():
+            workbook.close()
         finished_at = datetime.now(UTC)
         _insert_history(
             history,
@@ -498,8 +664,17 @@ def run_edct_analysis(
             history.close()
 
 
-def _result_columns(worksheet) -> tuple[int, int]:
-    headers = _header_map(worksheet)
+def _result_columns(worksheet, header_row: int = EDCT_HEADER_ROW) -> tuple[int, int]:
+    headers = _header_map(worksheet, header_row)
+    if worksheet.title == EDCT_PN_SHEET:
+        columns: list[int] = []
+        for name in ("Check", "Comment"):
+            column = headers.get(name)
+            if column is None:
+                column = worksheet.max_column + 1
+                worksheet.cell(header_row, column, name)
+            columns.append(column)
+        return columns[0], columns[1]
     table = worksheet.tables.get("Tabella2")
     if table is None:
         raise EdctLoadError("Missing required table: Tabella2")
@@ -509,11 +684,9 @@ def _result_columns(worksheet) -> tuple[int, int]:
     for name in ("Check", "Comment"):
         column = headers.get(name)
         if column is None:
-            max_col += 1
-            column = max_col
+            column = max(max_col, worksheet.max_column) + 1
             worksheet.cell(EDCT_HEADER_ROW, column, name)
-            table.tableColumns.append(TableColumn(id=len(table.tableColumns) + 1, name=name))
-        elif column > max_col:
+        if column > max_col:
             for added_column in range(max_col + 1, column + 1):
                 header = _normalized_text(worksheet.cell(EDCT_HEADER_ROW, added_column).value)
                 if not header:
@@ -550,7 +723,7 @@ def _update_result_history(
 def _preserve_ooxml_extensions(
     source: Path,
     target: Path,
-    replacement_parts: set[str],
+    replacement_parts: dict[str, str],
 ) -> None:
     def local_name(element) -> str:
         return element.tag.rsplit("}", 1)[-1]
@@ -603,16 +776,27 @@ def _preserve_ooxml_extensions(
                         matches[0].remove(existing)
                 matches[0].extend(extensions)
 
-    def restore_table_relationship_ids(source_root, target_root) -> None:
-        relationship_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-        source_parts = [
-            element for element in source_root.iter() if local_name(element) == "tablePart"
-        ]
-        target_parts = [
-            element for element in target_root.iter() if local_name(element) == "tablePart"
-        ]
-        for source_part, target_part in zip(source_parts, target_parts, strict=False):
-            target_part.set(relationship_id, source_part.attrib[relationship_id])
+    def restore_formula_values(source_root, target_root) -> None:
+        namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        source_cells = {
+            cell.attrib["r"]: cell
+            for cell in source_root.iter(f"{{{namespace}}}c")
+            if cell.find(f"{{{namespace}}}f") is not None
+        }
+        for cell in target_root.iter(f"{{{namespace}}}c"):
+            original = source_cells.get(cell.attrib["r"])
+            if original is None or cell.find(f"{{{namespace}}}f") is None:
+                continue
+            if "t" in original.attrib:
+                cell.set("t", original.attrib["t"])
+            else:
+                cell.attrib.pop("t", None)
+            for child in list(cell):
+                if local_name(child) in {"f", "v", "is"}:
+                    cell.remove(child)
+            for child in original:
+                if local_name(child) in {"f", "v", "is"}:
+                    cell.append(copy(child))
 
     with NamedTemporaryFile(dir=target.parent, suffix=".xlsx", delete=False) as temporary:
         temporary_path = Path(temporary.name)
@@ -622,22 +806,38 @@ def _preserve_ooxml_extensions(
             ZipFile(target) as target_archive,
             ZipFile(temporary_path, "w", ZIP_DEFLATED) as output_archive,
         ):
-            source_names = set(source_archive.namelist())
+            original_parts = {
+                generated: original for original, generated in replacement_parts.items()
+            }
             for item in target_archive.infolist():
                 content = target_archive.read(item.filename)
-                if item.filename in replacement_parts and item.filename in source_names:
-                    source_root = ElementTree.fromstring(source_archive.read(item.filename))
+                if item.filename in original_parts:
+                    source_root = ElementTree.fromstring(
+                        source_archive.read(original_parts[item.filename])
+                    )
                     has_extensions = any(
                         local_name(element) == "extLst" for element in source_root.iter()
                     )
                     is_worksheet = local_name(source_root) == "worksheet"
-                    if has_extensions or is_worksheet:
+                    if has_extensions or is_worksheet or local_name(source_root) == "table":
                         target_root = ElementTree.fromstring(content)
                         if has_extensions:
                             restore_extensions(source_root, target_root)
                             restore_identified_extensions(source_root, target_root)
                         if is_worksheet:
-                            restore_table_relationship_ids(source_root, target_root)
+                            restore_formula_values(source_root, target_root)
+                            annotated_children = {local_name(child): child for child in target_root}
+                            for index, child in enumerate(list(source_root)):
+                                name = local_name(child)
+                                if (
+                                    name in {"dimension", "sheetData"}
+                                    and name in annotated_children
+                                ):
+                                    source_root.remove(child)
+                                    source_root.insert(index, annotated_children[name])
+                            target_root = source_root
+                        elif local_name(source_root) == "table":
+                            target_root.set("id", source_root.attrib["id"])
                         content = ElementTree.tostring(
                             target_root,
                             encoding="utf-8",
@@ -653,19 +853,24 @@ def _merge_annotated_parts(
     source: Path,
     annotated: Path,
     target: Path,
-    replacement_parts: set[str],
+    replacement_parts: dict[str, str],
 ) -> None:
     with (
         ZipFile(source) as source_archive,
         ZipFile(annotated) as annotated_archive,
         ZipFile(target, "w", ZIP_DEFLATED) as output_archive,
     ):
-        missing = replacement_parts.difference(annotated_archive.namelist())
+        missing = set(replacement_parts.values()).difference(annotated_archive.namelist())
         if missing:
             raise EdctLoadError(f"Missing generated workbook parts: {', '.join(sorted(missing))}")
         for item in source_archive.infolist():
-            archive = annotated_archive if item.filename in replacement_parts else source_archive
-            output_archive.writestr(item, archive.read(item.filename))
+            replacement = replacement_parts.get(item.filename)
+            content = (
+                annotated_archive.read(replacement)
+                if replacement is not None
+                else source_archive.read(item.filename)
+            )
+            output_archive.writestr(item, content)
 
 
 def _validate_analysis_workbook(path: Path) -> None:
@@ -694,50 +899,64 @@ def export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
 def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    worksheet = result.workbook["Supplier Level"]
-    check_column, comment_column = _result_columns(worksheet)
-    style_source = max(1, min(check_column, comment_column) - 1)
+    worksheets = (
+        (result.workbook["Supplier Level"], EDCT_HEADER_ROW),
+        (result.workbook[EDCT_PN_SHEET], EDCT_PN_HEADER_ROW),
+    )
+    result_columns: dict[str, tuple[int, int]] = {}
+    for worksheet, header_row in worksheets:
+        check_column, comment_column = _result_columns(worksheet, header_row)
+        result_columns[worksheet.title] = (check_column, comment_column)
+        style_source = max(1, min(check_column, comment_column) - 1)
+        for column in (check_column, comment_column):
+            for row in range(header_row, worksheet.max_row + 1):
+                source = worksheet.cell(row, style_source)
+                target = worksheet.cell(row, column)
+                target._style = copy(source._style)
+        for row in range(header_row + 1, worksheet.max_row + 1):
+            worksheet.cell(row, check_column).value = None
+            worksheet.cell(row, comment_column).value = None
+        if worksheet.title == "Supplier Level":
+            headers = _header_map(worksheet)
+            for column in EDCT_DATE_COLUMNS:
+                column_index = headers[column]
+                for row in range(header_row + 1, worksheet.max_row + 1):
+                    cell = worksheet.cell(row, column_index)
+                    if isinstance(cell.value, (date, datetime)):
+                        cell.number_format = "DD/MM/YYYY"
 
-    for column in (check_column, comment_column):
-        for row in range(EDCT_HEADER_ROW, worksheet.max_row + 1):
-            source = worksheet.cell(row, style_source)
-            target = worksheet.cell(row, column)
-            target._style = copy(source._style)
-            if source.has_style:
-                target.number_format = source.number_format
-
-    for row in range(EDCT_HEADER_ROW + 1, worksheet.max_row + 1):
-        worksheet.cell(row, check_column).value = None
-        worksheet.cell(row, comment_column).value = None
-    headers = _header_map(worksheet)
-    for column in EDCT_DATE_COLUMNS:
-        column_index = headers[column]
-        for row in range(EDCT_HEADER_ROW + 1, worksheet.max_row + 1):
-            cell = worksheet.cell(row, column_index)
-            if isinstance(cell.value, (date, datetime)):
-                cell.number_format = "DD/MM/YYYY"
-
-    for row in result.assessed_rows:
-        row_result = result.row_results[row]
+    for (sheet_name, row), row_result in result.row_results.items():
+        worksheet = result.workbook[sheet_name]
+        check_column, comment_column = result_columns[sheet_name]
         worksheet.cell(row, check_column, row_result.check)
         worksheet.cell(row, comment_column, row_result.comment)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", result.input_file.stem).strip("._") or "analysis"
     target = target_dir / f"{safe_stem}_eDCT_checked_{timestamp}.xlsx"
-    table = worksheet.tables["Tabella2"]
+    supplier = result.workbook["Supplier Level"]
+    table = supplier.tables["Tabella2"]
     with NamedTemporaryFile(dir=target_dir, suffix=".xlsx", delete=False) as temporary:
         annotated = Path(temporary.name)
     try:
         result.workbook.save(annotated)
-        replacement_parts = {
-            worksheet.path.lstrip("/"),
-            table.path.lstrip("/"),
-            "xl/styles.xml",
-        }
+        with ZipFile(result.input_file) as source_archive:
+            source_sheets = _worksheet_parts(source_archive)
+            source_table = _table_part(
+                source_archive, source_sheets["Supplier Level"], table.displayName
+            )
+            replacement_parts = {
+                source_sheets[worksheet.title]: worksheet.path.lstrip("/")
+                for worksheet, _ in worksheets
+            }
+            replacement_parts[source_table] = table.path.lstrip("/")
+            replacement_parts["xl/styles.xml"] = "xl/styles.xml"
         _preserve_ooxml_extensions(result.input_file, annotated, replacement_parts)
         _merge_annotated_parts(result.input_file, annotated, target, replacement_parts)
         _validate_analysis_workbook(target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     finally:
         annotated.unlink(missing_ok=True)
 

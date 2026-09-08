@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 EDCT_PROJECT = "eDCT"
-EDCT_REQUIRED_SHEETS = ("Supplier Level", "Open Task", "Template-Cofor-Creation")
+EDCT_PN_SHEET = "PN Level"
+EDCT_PN_HEADER_ROW = 1
+EDCT_PN_SELLER_COLUMN = "Punch seller"
+EDCT_PN_REQUIRED_COLUMNS = (EDCT_PN_SELLER_COLUMN, "Triplet COFOR")
+EDCT_REQUIRED_SHEETS = (
+    "Supplier Level",
+    "Open Task",
+    "Template-Cofor-Creation",
+    EDCT_PN_SHEET,
+)
 EDCT_HEADER_ROW = 2
 EDCT_INDEX_COLUMN = "Index"
 EDCT_INDEX_COLUMNS = (EDCT_INDEX_COLUMN, "Line")
@@ -77,6 +86,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |",
     "| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |",
     "| `OPEN TASK` | Cross-checked for every assessed row | Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise |",
+    "| `PN Level.Triplet COFOR` | `Punch seller` matches an assessed supplier punch code | No | One whole triplet from that supplier's allowed set; trim surrounding whitespace and ignore case |",
 )
 
 EDCT_UNCHECKED_COLUMNS = (

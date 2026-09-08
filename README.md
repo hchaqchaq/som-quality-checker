@@ -11,7 +11,7 @@ uv run python main.py
 The app opens with a project selector:
 
 - **SOM Quality Checker** uses the existing SOM rules and workflow.
-- **eDCT Quality Checker** validates indexed rows on `Supplier Level`, cross-checks `Open Task`, and exports a preserved copy of the complete workbook.
+- **eDCT Quality Checker** validates indexed rows on `Supplier Level`, cross-checks `Open Task`, validates `PN Level` triplets against each assessed supplier's allowed `Triplet COFOR` set, and exports a preserved copy of the complete workbook with annotations on both assessed worksheets.
 
 Both projects require the user to choose an input workbook and output folder. Their run histories are kept separate.
 

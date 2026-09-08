@@ -69,7 +69,7 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertEqual(window.pages.currentWidget(), window.edct_shell)
         self.assertEqual(
             [window.edct_menu.item(index).text() for index in range(window.edct_menu.count())],
-            ["Analysis", "History"],
+            ["Analysis", "History", "Settings"],
         )
         self.assertEqual(window.edct_menu.currentRow(), 0)
         self.assertEqual(window.edct_pages.currentWidget().widget(), window.edct_page)
@@ -114,13 +114,14 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertTrue(hasattr(window, "som_destination_label"))
         self.assertTrue(hasattr(window, "edct_destination_label"))
 
-        for open_button, shell, menu, pages, destination in (
+        for open_button, shell, menu, pages, destination, expected_items in (
             (
                 window.project_page.som_button,
                 window.som_shell,
                 window.menu,
                 window.som_pages,
                 window.som_destination_label,
+                ["Analysis", "History"],
             ),
             (
                 window.project_page.edct_button,
@@ -128,13 +129,14 @@ class ProjectNavigationTests(unittest.TestCase):
                 window.edct_menu,
                 window.edct_pages,
                 window.edct_destination_label,
+                ["Analysis", "History", "Settings"],
             ),
         ):
             open_button.click()
             self.assertEqual(window.pages.currentWidget(), shell)
             self.assertEqual(
                 [menu.item(index).text() for index in range(menu.count())],
-                ["Analysis", "History"],
+                expected_items,
             )
             self.assertEqual(destination.text(), "Analysis")
             menu.setCurrentRow(1)

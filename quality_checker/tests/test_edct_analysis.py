@@ -1474,6 +1474,99 @@ class EdctWorkbookTests(unittest.TestCase):
         self.assertEqual(result.row_results[("Supplier Level", 3)].check, 1)
         self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
 
+    def test_run_analysis_with_custom_header_settings(self) -> None:
+        from quality_checker.checkers.edct.settings import EdctHeaderSettings
+
+        settings = EdctHeaderSettings.default()
+        settings.supplier_level["Supplier Punch code"] = "Code Fournisseur"
+        settings.supplier_level["Supplier name"] = "Nom Fournisseur"
+        settings.supplier_level["Sales contact"] = "Contact Commercial"
+        settings.open_task["Punch Code"] = "Code Tache"
+        settings.pn_level["Punch seller"] = "Vendeur"
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            # Create workbook with renamed headers
+            workbook = Workbook()
+            all_columns = [
+                settings.get_header("Supplier Level", col) for col in EDCT_REQUIRED_COLUMNS
+            ]
+            supplier = workbook.active
+            supplier.title = "Supplier Level"
+            supplier.append(["metadata"] * len(all_columns))
+            supplier.append(all_columns)
+
+            base: dict[str, object] = {column: "" for column in all_columns}
+            for row_number, index in ((3, "Metz_01"), (4, "Metz_02")):
+                values = dict(base)
+                values.update(
+                    {
+                        "Index": index,
+                        "Code Fournisseur": 1000 + row_number,
+                        "Nom Fournisseur": f"Supplier {row_number}",
+                        "Effective kick-off date": "01/01/2026",
+                        "Contact Commercial": "invalid-email-format",
+                        "Cofor created date": "",
+                        "Overseas": "",
+                        "OPEN TASK": "YES" if row_number == 3 else "",
+                    }
+                )
+                for col in EDCT_FORMULA_COLUMNS:
+                    values[col] = f'=IF(A{row_number}="","",A{row_number})'
+                supplier.append([values[col] for col in all_columns])
+
+            table = Table(
+                displayName="Tabella2",
+                ref=f"A2:{get_column_letter(len(all_columns))}4",
+            )
+            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+            supplier.add_table(table)
+
+            open_task = workbook.create_sheet("Open Task")
+            open_task.append(["metadata"])
+            open_task.append(["Code Tache"])
+            open_task.append([1003])
+
+            cofor_template = workbook.create_sheet("Template-Cofor-Creation")
+            cofor_template["D1"] = "Punch Code"
+            cofor_template["D2"] = "=D3"
+            cofor_template["D3"] = "9999"
+
+            pn = workbook.create_sheet("PN Level")
+            pn.append(["Vendeur", "Triplet COFOR"])
+            pn.append(["1003", "123456  78"])
+
+            path = directory / "custom_edct.xlsx"
+            workbook.save(path)
+            set_formula_caches(
+                path,
+                {"xl/worksheets/sheet1.xml": {"G3": "123456  78", "G4": "123456  78"}},
+            )
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                # Running without settings should fail with missing columns
+                with self.assertRaises(EdctLoadError) as err:
+                    run_edct_analysis(
+                        path, connection=connection, settings=EdctHeaderSettings.default()
+                    )
+                self.assertIn("Supplier Punch code", str(err.exception))
+
+                # Running with custom settings should succeed
+                result = run_edct_analysis(
+                    path,
+                    connection=connection,
+                    analysis_date=date(2026, 7, 30),
+                    settings=settings,
+                )
+
+            self.assertEqual(len(result.assessed_rows), 3)
+            row_3 = result.row_results[("Supplier Level", 3)]
+            self.assertGreater(row_3.check, 0)
+            self.assertIn("Contact Commercial = invalid-email-format", row_3.comment)
+            self.assertEqual(result.rule_totals[("email", "Contact Commercial")], 2)
+            pn_row = result.row_results[("PN Level", 2)]
+            self.assertEqual(pn_row.check, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

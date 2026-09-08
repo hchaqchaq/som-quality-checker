@@ -34,6 +34,15 @@ from PyQt6.QtWidgets import (
 from ..application import APP_LOGO_PATH, PREVIEW_ROWS
 from ..checkers.edct.config import EDCT_HEADER_ROW, EDCT_INDEX_COLUMNS, EDCT_PN_SHEET
 from ..checkers.edct.runner import EdctRunResult, export_edct_result, run_edct_analysis
+from ..checkers.edct.settings import (
+    EDCT_COFOR_TEMPLATE_SHEET,
+    OPEN_TASK_SHEET,
+    SUPPLIER_LEVEL_SHEET,
+    EdctHeaderSettings,
+    inspect_workbook_headers,
+    load_edct_settings,
+    save_edct_settings,
+)
 from ..checkers.som.config import ScopeFilterDefinition
 from ..checkers.som.loader import load_excel
 from ..checkers.som.runner import RunResult, export_result, run_analysis
@@ -227,7 +236,10 @@ def _create_section_card(title: str, hint: str) -> QFrame:
     return card
 
 
-def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
+def _create_sidebar(
+    title: str,
+    menu_items: tuple[str, ...] = ("Analysis", "History"),
+) -> tuple[QFrame, QListWidget, QPushButton]:
     sidebar = QFrame()
     sidebar.setObjectName("sidebarPanel")
     layout = QVBoxLayout(sidebar)
@@ -260,7 +272,7 @@ def _create_sidebar(title: str) -> tuple[QFrame, QListWidget, QPushButton]:
     layout.addWidget(title_label)
 
     menu = QListWidget()
-    menu.addItems(("Analysis", "History"))
+    menu.addItems(menu_items)
     menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     layout.addWidget(menu)
     back_button = QPushButton("Switch checker")
@@ -310,13 +322,19 @@ def _create_checker_shell(
     title: str,
     analysis_page: QWidget,
     history_page: QWidget,
+    settings_page: QWidget | None = None,
 ) -> tuple[QWidget, QListWidget, QStackedWidget, QPushButton, QLabel, QLabel]:
     shell = QWidget()
     shell_layout = QHBoxLayout(shell)
     shell_layout.setContentsMargins(0, 0, 0, 0)
     shell_layout.setSpacing(14)
 
-    sidebar, menu, back_button = _create_sidebar(title)
+    menu_items = (
+        ("Analysis", "History", "Settings")
+        if settings_page is not None
+        else ("Analysis", "History")
+    )
+    sidebar, menu, back_button = _create_sidebar(title, menu_items)
     shell_layout.addWidget(sidebar)
 
     content = QWidget()
@@ -330,6 +348,8 @@ def _create_checker_shell(
     pages.setObjectName("pageSurface")
     pages.addWidget(_wrap_page(analysis_page))
     pages.addWidget(_wrap_page(history_page))
+    if settings_page is not None:
+        pages.addWidget(_wrap_page(settings_page))
     content_layout.addWidget(pages)
     shell_layout.addWidget(content)
     shell_layout.setStretch(0, 0)
@@ -636,6 +656,227 @@ class EdctPage(QWidget):
         self._run_thread = None
 
 
+class EdctSettingsPage(QWidget):
+    status_changed = pyqtSignal(str)
+
+    headers = ("Worksheet", "Default Field", "Configured Excel Header")
+
+    def __init__(
+        self,
+        settings_path: Path | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.settings_path = settings_path
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        heading = QLabel("eDCT Settings")
+        heading.setObjectName("pageTitle")
+        description = QLabel(
+            "Configure required Excel column header names across worksheets. "
+            "Analysis will locate columns using these configured names."
+        )
+        description.setObjectName("supportingText")
+        description.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(description)
+
+        card = _create_section_card(
+            "Column Header Mappings",
+            "Edit the header names expected in your workbook. Leave blank or duplicate headers will be flagged.",
+        )
+        card_layout = cast(QVBoxLayout, card.layout())
+
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+        self.load_file_button = QPushButton("Load Headers from File")
+        self.load_file_button.setObjectName("accentButton")
+        self.reset_button = QPushButton("Reset to Defaults")
+        self.reset_button.setObjectName("quietButton")
+        self.save_button = QPushButton("Save Settings")
+        self.save_button.setObjectName("primaryButton")
+
+        actions_row.addWidget(self.load_file_button)
+        actions_row.addWidget(self.reset_button)
+        actions_row.addStretch(1)
+        actions_row.addWidget(self.save_button)
+        card_layout.addLayout(actions_row)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self.headers))
+        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.table.setMinimumHeight(350)
+        card_layout.addWidget(self.table)
+
+        self.status_label = QLabel("Settings ready")
+        self.status_label.setObjectName("statusNeutral")
+        card_layout.addWidget(self.status_label)
+
+        layout.addWidget(card, 1)
+
+        self.save_button.clicked.connect(self._save)
+        self.reset_button.clicked.connect(self._reset_to_defaults)
+        self.load_file_button.clicked.connect(self._load_from_file)
+
+        self._populate_table(load_edct_settings(self.settings_path))
+
+    def _populate_table(self, settings: EdctHeaderSettings) -> None:
+        sheets = (
+            (SUPPLIER_LEVEL_SHEET, settings.supplier_level),
+            (EDCT_PN_SHEET, settings.pn_level),
+            (OPEN_TASK_SHEET, settings.open_task),
+            (EDCT_COFOR_TEMPLATE_SHEET, settings.cofor_template),
+        )
+        total_rows = sum(len(mapping) for _, mapping in sheets)
+        self.table.setRowCount(total_rows)
+
+        current_row = 0
+        for sheet_name, mapping in sheets:
+            for canonical, configured in mapping.items():
+                self.table.setCellWidget(current_row, 2, None)
+
+                sheet_item = QTableWidgetItem(sheet_name)
+                sheet_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self.table.setItem(current_row, 0, sheet_item)
+
+                field_item = QTableWidgetItem(canonical)
+                field_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self.table.setItem(current_row, 1, field_item)
+
+                config_item = QTableWidgetItem(configured)
+                config_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsEditable
+                )
+                self.table.setItem(current_row, 2, config_item)
+                current_row += 1
+
+    def _get_row_value(self, row: int) -> str:
+        cell_widget = self.table.cellWidget(row, 2)
+        if isinstance(cell_widget, QComboBox):
+            return cell_widget.currentText().strip()
+        item = self.table.item(row, 2)
+        return item.text().strip() if item else ""
+
+    @staticmethod
+    def _find_best_match(canonical: str, current_val: str, options: list[str]) -> str:
+        if canonical in options:
+            return canonical
+        if current_val in options:
+            return current_val
+        canonical_cf = canonical.casefold()
+        for opt in options:
+            if opt.casefold() == canonical_cf:
+                return opt
+        current_cf = current_val.casefold()
+        for opt in options:
+            if opt.casefold() == current_cf:
+                return opt
+        return current_val
+
+    def apply_sample_workbook_headers(self, file_path: Path | str) -> None:
+        try:
+            detected = inspect_workbook_headers(file_path)
+        except Exception as exc:
+            self._set_status(f"Failed to inspect headers: {exc}", level="error")
+            return
+
+        total_detected = sum(len(headers) for headers in detected.values())
+        if total_detected == 0:
+            self._set_status("No headers found in the selected workbook.", level="error")
+            return
+
+        for row in range(self.table.rowCount()):
+            sheet = self.table.item(row, 0).text()
+            canonical = self.table.item(row, 1).text()
+            current_val = self._get_row_value(row)
+            sheet_headers = detected.get(sheet, [])
+            if not sheet_headers:
+                continue
+
+            best_match = self._find_best_match(canonical, current_val, sheet_headers)
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(sheet_headers)
+            if best_match and best_match not in sheet_headers:
+                combo.addItem(best_match)
+            combo.setCurrentText(best_match or current_val)
+            self.table.setCellWidget(row, 2, combo)
+
+        self._set_status(
+            f"Loaded headers from {Path(file_path).name}. Review dropdowns and click Save Settings.",
+            level="success",
+        )
+
+    def get_table_mapping(self) -> dict[str, dict[str, str]]:
+        result: dict[str, dict[str, str]] = {
+            SUPPLIER_LEVEL_SHEET: {},
+            EDCT_PN_SHEET: {},
+            OPEN_TASK_SHEET: {},
+            EDCT_COFOR_TEMPLATE_SHEET: {},
+        }
+        for row in range(self.table.rowCount()):
+            sheet = self.table.item(row, 0).text()
+            canonical = self.table.item(row, 1).text()
+            configured = self._get_row_value(row)
+            if sheet in result:
+                result[sheet][canonical] = configured
+        return result
+
+    def _save(self) -> None:
+        data = self.get_table_mapping()
+        settings = EdctHeaderSettings.from_dict(data)
+        errors = settings.validate()
+        if errors:
+            self._set_status(f"Validation failed: {errors[0]}", level="error")
+            return
+        save_edct_settings(settings, self.settings_path)
+        self._set_status("Settings saved successfully.", level="success")
+
+    def _reset_to_defaults(self) -> None:
+        defaults = EdctHeaderSettings.default()
+        self._populate_table(defaults)
+        self._set_status(
+            "Headers reset to defaults. Click Save Settings to persist.", level="neutral"
+        )
+
+    def _set_status(self, text: str, level: str = "neutral") -> None:
+        object_names = {
+            "neutral": "statusNeutral",
+            "progress": "statusProgress",
+            "success": "statusSuccess",
+            "error": "statusError",
+        }
+        self.status_label.setText(text)
+        self.status_label.setObjectName(object_names.get(level, "statusNeutral"))
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self.status_label.update()
+        self.status_changed.emit(text)
+
+    def _load_from_file(self) -> None:
+        selected_file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose sample Excel file",
+            str(Path.home()),
+            "Excel files (*.xlsx *.xlsm *.xls)",
+        )
+        if selected_file:
+            self.apply_sample_workbook_headers(selected_file)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, controller: QualityCheckerController) -> None:
         super().__init__()
@@ -659,6 +900,7 @@ class MainWindow(QMainWindow):
         self.welcome_page = WelcomePage(controller)
         self.history_page = HistoryPage(controller, "SOM")
         self.edct_history_page = HistoryPage(controller, "eDCT")
+        self.edct_settings_page = EdctSettingsPage()
         self.edct_page = EdctPage(controller, self.edct_history_page)
         (
             self.som_shell,
@@ -675,9 +917,15 @@ class MainWindow(QMainWindow):
             self.edct_back_button,
             self.edct_destination_label,
             self.edct_state_label,
-        ) = _create_checker_shell("eDCT Checker", self.edct_page, self.edct_history_page)
+        ) = _create_checker_shell(
+            "eDCT Checker",
+            self.edct_page,
+            self.edct_history_page,
+            self.edct_settings_page,
+        )
         self.welcome_page.status_changed.connect(self.som_state_label.setText)
         self.edct_page.status_changed.connect(self.edct_state_label.setText)
+        self.edct_settings_page.status_changed.connect(self.edct_state_label.setText)
         self.pages.addWidget(self.project_page)
         self.pages.addWidget(self.som_shell)
         self.pages.addWidget(self.edct_shell)

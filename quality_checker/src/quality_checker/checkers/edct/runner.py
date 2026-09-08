@@ -55,6 +55,7 @@ from .config import (
     EDCT_REQUIRED_SHEETS,
     EDCT_TRIPLE_STATUS_VALUES,
 )
+from .settings import EdctHeaderSettings, load_edct_settings
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 COFOR_REGEX = re.compile(r"^[A-Za-z0-9]{6} {2}[A-Za-z0-9]{2}$")
@@ -157,12 +158,13 @@ def _formula_key(formula: object) -> str | None:
     return "=" + result[2:] if result.startswith("=+") else result
 
 
-def _open_task_punches(workbook) -> set[str]:
+def _open_task_punches(workbook, settings: EdctHeaderSettings) -> set[str]:
     worksheet = workbook["Open Task"]
     headers = _header_map(worksheet)
-    column = headers.get("Punch Code")
+    punch_col_name = settings.get_header("Open Task", "Punch Code")
+    column = headers.get(punch_col_name)
     if column is None:
-        raise EdctLoadError("Missing required columns in Open Task: Punch Code")
+        raise EdctLoadError(f"Missing required columns in Open Task: {punch_col_name}")
     return {
         punch
         for row in range(EDCT_HEADER_ROW + 1, worksheet.max_row + 1)
@@ -186,19 +188,25 @@ def _evaluate_business_rules(
     headers: dict[str, int],
     assessed_rows: tuple[int, ...],
     analysis_date: date,
+    settings: EdctHeaderSettings,
 ) -> tuple[dict[int, EdctRowResult], Counter[tuple[str, str]]]:
     worksheet = workbook["Supplier Level"]
     failures: dict[int, list[tuple[str, str, object]]] = {row: [] for row in assessed_rows}
     totals: Counter[tuple[str, str]] = Counter()
 
+    def get_supplier_header(canonical: str) -> str:
+        return settings.get_header("Supplier Level", canonical)
+
     def value(row: int, column: str) -> object:
-        return worksheet.cell(row, headers[column]).value
+        header_name = get_supplier_header(column)
+        return worksheet.cell(row, headers[header_name]).value
 
     def fail(row: int, rule: str, column: str, reason: str) -> None:
-        failures[row].append((reason, column, value(row, column)))
-        totals[(rule, column)] += 1
+        header_name = get_supplier_header(column)
+        failures[row].append((reason, header_name, value(row, column)))
+        totals[(rule, header_name)] += 1
 
-    open_task_punches = _open_task_punches(workbook)
+    open_task_punches = _open_task_punches(workbook, settings)
     triple_status_values = {item.casefold() for item in EDCT_TRIPLE_STATUS_VALUES}
     portal_values = {item.casefold() for item in EDCT_PORTAL_VALUES}
     edi_mode_values = {item.casefold() for item in EDCT_EDI_MODE_VALUES}
@@ -206,18 +214,19 @@ def _evaluate_business_rules(
     if assessed_rows:
         reference_row = assessed_rows[0]
         for column in EDCT_FORMULA_COLUMNS:
-            reference_cell = worksheet.cell(reference_row, headers[column])
+            header_name = get_supplier_header(column)
+            reference_cell = worksheet.cell(reference_row, headers[header_name])
             reference_formula = _formula_key(reference_cell.value)
             if reference_formula is None:
                 reason = (
                     "Formula validation failed: formula reference row is missing "
-                    f"the reference formula for {column}"
+                    f"the reference formula for {header_name}"
                 )
                 for row in assessed_rows:
                     fail(row, "formula", column, reason)
                 continue
             for row in assessed_rows[1:]:
-                target_cell = worksheet.cell(row, headers[column])
+                target_cell = worksheet.cell(row, headers[header_name])
                 expected = Translator(
                     str(reference_cell.value),
                     origin=reference_cell.coordinate,
@@ -291,12 +300,14 @@ def _evaluate_business_rules(
         punch_in_cofor_template = (
             _normalized_choice(value(row, "Supplier Punch code")) in cofor_template_punches
         )
+        request_date_col_name = get_supplier_header(EDCT_COFOR_REQUEST_DATE_COLUMN)
+        supplier_punch_col_name = get_supplier_header("Supplier Punch code")
         if punch_in_cofor_template and not request_date_filled:
             fail(
                 row,
                 "date_required",
                 EDCT_COFOR_REQUEST_DATE_COLUMN,
-                f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is required because the Punch Code exists "
+                f"{request_date_col_name} is required because the Punch Code exists "
                 "in Template-Cofor-Creation",
             )
         if request_date_filled and not punch_in_cofor_template:
@@ -304,8 +315,8 @@ def _evaluate_business_rules(
                 row,
                 "cofor_template",
                 "Supplier Punch code",
-                "Supplier Punch code must exist in Template-Cofor-Creation when "
-                f"{EDCT_COFOR_REQUEST_DATE_COLUMN} is populated",
+                f"{supplier_punch_col_name} must exist in Template-Cofor-Creation when "
+                f"{request_date_col_name} is populated",
             )
         punch_in_open_task = (
             _normalized_punch(value(row, "Supplier Punch code")) in open_task_punches
@@ -387,9 +398,19 @@ def _evaluate_pn_triplets(
     supplier_headers: dict[str, int],
     supplier_rows: tuple[int, ...],
     pn_headers: dict[str, int],
+    settings: EdctHeaderSettings,
 ) -> tuple[dict[tuple[str, int], EdctRowResult], dict[int, tuple[object, object]]]:
     pn = workbook[EDCT_PN_SHEET]
-    seller_column = pn_headers[EDCT_PN_SELLER_COLUMN]
+    configured_pn_seller = settings.get_header(EDCT_PN_SHEET, EDCT_PN_SELLER_COLUMN)
+    configured_pn_triplet = settings.get_header(EDCT_PN_SHEET, "Triplet COFOR")
+    configured_supplier_punch = settings.get_header("Supplier Level", "Supplier Punch code")
+    configured_supplier_triplet = settings.get_header("Supplier Level", "Triplet COFOR")
+
+    seller_column = pn_headers[configured_pn_seller]
+    pn_triplet_column = pn_headers[configured_pn_triplet]
+    supplier_punch_column = supplier_headers[configured_supplier_punch]
+    supplier_triplet_column = supplier_headers[configured_supplier_triplet]
+
     candidate_rows = [
         row
         for row in range(EDCT_PN_HEADER_ROW + 1, pn.max_row + 1)
@@ -443,14 +464,12 @@ def _evaluate_pn_triplets(
             return {}, {}
         allowed_triplets: dict[str, set[str]] = defaultdict(set)
         for row in supplier_rows:
-            punch = _normalized_choice(
-                resolved_value("Supplier Level", row, supplier_headers["Supplier Punch code"])
-            )
+            punch = _normalized_choice(resolved_value("Supplier Level", row, supplier_punch_column))
             if not punch:
                 continue
             allowed = allowed_triplets[punch]
             triplet = _normalized_choice(
-                resolved_value("Supplier Level", row, supplier_headers["Triplet COFOR"])
+                resolved_value("Supplier Level", row, supplier_triplet_column)
             )
             if triplet:
                 allowed.add(triplet)
@@ -461,7 +480,7 @@ def _evaluate_pn_triplets(
             punch = _normalized_choice(seller)
             if not punch or punch not in allowed_triplets:
                 continue
-            triplet_value = resolved_value(EDCT_PN_SHEET, row, pn_headers["Triplet COFOR"])
+            triplet_value = resolved_value(EDCT_PN_SHEET, row, pn_triplet_column)
             pn_values[row] = (seller, triplet_value)
             triplet = _normalized_choice(triplet_value)
             allowed = allowed_triplets[punch]
@@ -473,9 +492,9 @@ def _evaluate_pn_triplets(
                 rejected = _normalized_text(triplet_value) or "<blank>"
                 row_result = EdctRowResult(
                     1,
-                    f"Triplet COFOR = {rejected} is not allowed for "
-                    f"{EDCT_PN_SELLER_COLUMN} = {_normalized_text(seller)}; "
-                    f"allowed Triplet COFOR values: {allowed_display}",
+                    f"{configured_pn_triplet} = {rejected} is not allowed for "
+                    f"{configured_pn_seller} = {_normalized_text(seller)}; "
+                    f"allowed {configured_pn_triplet} values: {allowed_display}",
                 )
             row_results[(EDCT_PN_SHEET, row)] = row_result
         return row_results, pn_values
@@ -533,7 +552,9 @@ def run_edct_analysis(
     connection: sqlite3.Connection | None = None,
     *,
     analysis_date: date | None = None,
+    settings: EdctHeaderSettings | None = None,
 ) -> EdctRunResult:
+    active_settings = settings if settings is not None else load_edct_settings()
     resolved_input = Path(input_path)
     started_at = datetime.now(UTC)
     started_perf = perf_counter()
@@ -549,26 +570,38 @@ def run_edct_analysis(
         missing_columns: list[str] = []
         headers: dict[str, int] = {}
         pn_headers: dict[str, int] = {}
+        supplier_index_header = active_settings.get_header("Supplier Level", EDCT_INDEX_COLUMN)
         if "Supplier Level" in workbook.sheetnames:
             headers = _header_map(workbook["Supplier Level"])
-            missing_columns.extend(
-                column
-                for column in EDCT_REQUIRED_COLUMNS
-                if column != EDCT_INDEX_COLUMN and column not in headers
-            )
-            if not any(column in headers for column in EDCT_INDEX_COLUMNS):
-                missing_columns.append("Index or Line")
+            for column in EDCT_REQUIRED_COLUMNS:
+                if column == EDCT_INDEX_COLUMN:
+                    continue
+                configured_header = active_settings.get_header("Supplier Level", column)
+                if configured_header not in headers:
+                    missing_columns.append(configured_header)
+            if supplier_index_header == EDCT_INDEX_COLUMN:
+                if not any(column in headers for column in EDCT_INDEX_COLUMNS):
+                    missing_columns.append("Index or Line")
+            else:
+                if supplier_index_header not in headers:
+                    missing_columns.append(supplier_index_header)
+
         if EDCT_PN_SHEET in workbook.sheetnames:
             pn_headers = _header_map(workbook[EDCT_PN_SHEET], EDCT_PN_HEADER_ROW)
-            missing_columns.extend(
-                f"{EDCT_PN_SHEET}.{column}"
-                for column in EDCT_PN_REQUIRED_COLUMNS
-                if column not in pn_headers
-            )
-        if "Open Task" in workbook.sheetnames and "Punch Code" not in _header_map(
+            for column in EDCT_PN_REQUIRED_COLUMNS:
+                configured_header = active_settings.get_header(EDCT_PN_SHEET, column)
+                if configured_header not in pn_headers:
+                    missing_columns.append(f"{EDCT_PN_SHEET}.{configured_header}")
+
+        open_task_punch_header = active_settings.get_header("Open Task", "Punch Code")
+        if "Open Task" in workbook.sheetnames and open_task_punch_header not in _header_map(
             workbook["Open Task"]
         ):
-            missing_columns.append("Open Task.Punch Code")
+            missing_columns.append(f"Open Task.{open_task_punch_header}")
+
+        expected_cofor_header = active_settings.get_header(
+            EDCT_COFOR_TEMPLATE_SHEET, EDCT_COFOR_TEMPLATE_PUNCH_HEADER
+        )
         if EDCT_COFOR_TEMPLATE_SHEET in workbook.sheetnames:
             punch_header = (
                 workbook[EDCT_COFOR_TEMPLATE_SHEET]
@@ -578,10 +611,8 @@ def run_edct_analysis(
                 )
                 .value
             )
-            if punch_header != EDCT_COFOR_TEMPLATE_PUNCH_HEADER:
-                missing_columns.append(
-                    f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({EDCT_COFOR_TEMPLATE_PUNCH_HEADER})"
-                )
+            if punch_header != expected_cofor_header:
+                missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({expected_cofor_header})")
         if missing_sheets or missing_columns:
             workbook.close()
             parts = []
@@ -592,20 +623,27 @@ def run_edct_analysis(
             raise EdctLoadError(f"Missing required structure: {'; '.join(parts)}")
 
         supplier = workbook["Supplier Level"]
-        index_column = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
+        if supplier_index_header in headers:
+            index_column = supplier_index_header
+        elif supplier_index_header == EDCT_INDEX_COLUMN and "Line" in headers:
+            index_column = "Line"
+        else:
+            index_column = supplier_index_header
+
         supplier_rows = tuple(
             row
             for row in range(EDCT_HEADER_ROW + 1, supplier.max_row + 1)
             if _normalized_text(supplier.cell(row, headers[index_column]).value)
         )
         pn_results, pn_values = _evaluate_pn_triplets(
-            workbook, resolved_input, headers, supplier_rows, pn_headers
+            workbook, resolved_input, headers, supplier_rows, pn_headers, active_settings
         )
         supplier_results, rule_totals = _evaluate_business_rules(
             workbook,
             headers,
             supplier_rows,
             analysis_date or date.today(),
+            active_settings,
         )
         row_results = {
             ("Supplier Level", row): row_result for row, row_result in supplier_results.items()
@@ -613,7 +651,8 @@ def run_edct_analysis(
         row_results.update(pn_results)
         pn_failures = sum(row_result.check for row_result in pn_results.values())
         if pn_failures:
-            rule_totals[("pn_triplet_cofor", "Triplet COFOR")] = pn_failures
+            configured_pn_triplet = active_settings.get_header(EDCT_PN_SHEET, "Triplet COFOR")
+            rule_totals[("pn_triplet_cofor", configured_pn_triplet)] = pn_failures
         assessed_rows = tuple(row_results)
         finished_at = datetime.now(UTC)
         duration_s = perf_counter() - started_perf

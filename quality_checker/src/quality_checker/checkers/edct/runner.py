@@ -798,6 +798,41 @@ def _preserve_ooxml_extensions(
                 if local_name(child) in {"f", "v", "is"}:
                     cell.append(copy(child))
 
+    def preserve_namespace_compatibility(source_xml: bytes, source_root) -> None:
+        root_match = re.search(rb"<(?:[A-Za-z_][\w.-]*:)?worksheet\b", source_xml)
+        if root_match is None:
+            return
+        root_end = source_xml.index(b">", root_match.start())
+        root_start = source_xml[root_match.start() : root_end + 1].decode("utf-8")
+        namespaces = {
+            (match.group(1) or ""): match.group(2)
+            for match in re.finditer(
+                r'xmlns(?::([A-Za-z_][\w.-]*))?="([^"]+)"',
+                root_start,
+            )
+        }
+        used_namespaces = {
+            name[1:].split("}", 1)[0]
+            for element in source_root.iter()
+            for name in (element.tag, *element.attrib)
+            if name.startswith("{")
+        }
+        for prefix, namespace in namespaces.items():
+            if namespace in used_namespaces and not re.fullmatch(r"ns\d+", prefix):
+                ElementTree.register_namespace(prefix, namespace)
+
+        compatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+        ignorable_key = f"{{{compatibility}}}Ignorable"
+        ignorable = source_root.attrib.get(ignorable_key)
+        if ignorable:
+            retained = [
+                prefix for prefix in ignorable.split() if namespaces.get(prefix) in used_namespaces
+            ]
+            if retained:
+                source_root.set(ignorable_key, " ".join(retained))
+            else:
+                source_root.attrib.pop(ignorable_key)
+
     with NamedTemporaryFile(dir=target.parent, suffix=".xlsx", delete=False) as temporary:
         temporary_path = Path(temporary.name)
     try:
@@ -812,13 +847,14 @@ def _preserve_ooxml_extensions(
             for item in target_archive.infolist():
                 content = target_archive.read(item.filename)
                 if item.filename in original_parts:
-                    source_root = ElementTree.fromstring(
-                        source_archive.read(original_parts[item.filename])
-                    )
+                    source_xml = source_archive.read(original_parts[item.filename])
+                    source_root = ElementTree.fromstring(source_xml)
                     has_extensions = any(
                         local_name(element) == "extLst" for element in source_root.iter()
                     )
                     is_worksheet = local_name(source_root) == "worksheet"
+                    if is_worksheet:
+                        preserve_namespace_compatibility(source_xml, source_root)
                     if has_extensions or is_worksheet or local_name(source_root) == "table":
                         target_root = ElementTree.fromstring(content)
                         if has_extensions:

@@ -156,10 +156,24 @@ def add_worksheet_extension(
         f'<extLst><ext uri="{marker}"><test:payload xmlns:test="urn:test">'
         "keep me</test:payload></ext></extLst>"
     ).encode()
+    root_namespaces = (
+        b' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+        b' mc:Ignorable="x14ac xr"'
+        b' xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"'
+        b' xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"'
+        b' xr:uid="{97570D38-0785-4F6B-AB88-F8FBC149D0F1}"'
+    )
     with ZipFile(path) as source, ZipFile(replacement, "w", ZIP_DEFLATED) as target:
         for item in source.infolist():
             content = source.read(item.filename)
             if item.filename == worksheet_part:
+                root_end = content.index(b">", content.index(b"<worksheet"))
+                content = content[:root_end] + root_namespaces + content[root_end:]
+                content = content.replace(
+                    b"<sheetFormatPr ",
+                    b'<sheetFormatPr x14ac:dyDescent="0.25" ',
+                    1,
+                )
                 content = content.replace(b"</worksheet>", extension + b"</worksheet>")
             target.writestr(item, content)
     replacement.replace(path)
@@ -439,6 +453,16 @@ class EdctWorkbookTests(unittest.TestCase):
                     if name not in changed:
                         self.assertEqual(source.read(name), exported.read(name), name)
                 self.assertIn(b"{PN-PRESERVATION}", exported.read("xl/worksheets/sheet42.xml"))
+                worksheet_xml = exported.read("xl/worksheets/sheet42.xml")
+                root_start = worksheet_xml[
+                    worksheet_xml.index(
+                        b"<", worksheet_xml.index(b"<?xml") + 5
+                    ) : worksheet_xml.index(b">", worksheet_xml.index(b"<?xml") + 5) + 1
+                ]
+                ignorable = re.search(rb'Ignorable="([^"]+)"', root_start)
+                if ignorable is not None:
+                    for prefix in ignorable.group(1).split():
+                        self.assertIn(b"xmlns:" + prefix + b"=", root_start)
             exported = load_workbook(output, data_only=False)
             self.addCleanup(exported.close)
             for sheet_name, header_row, source_row, expected_check in (

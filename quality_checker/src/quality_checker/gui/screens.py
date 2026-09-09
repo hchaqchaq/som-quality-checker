@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -205,9 +207,65 @@ class ResponsiveColumns(QWidget):
         super().resizeEvent(event)
 
 
-def _run_edct(input_path: str, output_path: str) -> tuple[EdctRunResult, Path]:
+@dataclass(frozen=True, slots=True)
+class EdctDisplayResult:
+    run_id: int
+    rows_total: int
+    rows_failed: int
+    preview_rows: tuple[tuple[object, ...], ...]
+
+
+def _build_edct_display_result(result: EdctRunResult) -> EdctDisplayResult:
+    supplier = result.workbook["Supplier Level"]
+    headers = {
+        str(cell.value).strip(): cell.column
+        for cell in supplier[EDCT_HEADER_ROW]
+        if cell.value is not None
+    }
+    index_header = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
+    preview_rows: list[tuple[object, ...]] = []
+    for sheet_name, workbook_row in result.assessed_rows[:PREVIEW_ROWS]:
+        if sheet_name == EDCT_PN_SHEET:
+            punch, triplet = result.pn_values[workbook_row]
+            index = supplier_name = ""
+        else:
+            index = supplier.cell(workbook_row, headers[index_header]).value
+            punch = supplier.cell(workbook_row, headers["Supplier Punch code"]).value
+            supplier_name = supplier.cell(workbook_row, headers["Supplier name"]).value
+            triplet = supplier.cell(workbook_row, headers["Triplet COFOR"]).value
+        row_result = result.row_results[(sheet_name, workbook_row)]
+        preview_rows.append(
+            (
+                sheet_name,
+                workbook_row,
+                index,
+                punch,
+                supplier_name,
+                triplet,
+                row_result.check,
+                row_result.comment,
+            )
+        )
+    return EdctDisplayResult(
+        run_id=result.run_id,
+        rows_total=len(result.assessed_rows),
+        rows_failed=result.rows_failed,
+        preview_rows=tuple(preview_rows),
+    )
+
+
+def _run_edct_in_process(input_path: str, output_path: str) -> tuple[EdctDisplayResult, Path]:
     result = run_edct_analysis(input_path)
-    return result, export_edct_result(result, output_path)
+    try:
+        exported_path = export_edct_result(result, output_path)
+        return _build_edct_display_result(result), exported_path
+    finally:
+        result.workbook.close()
+
+
+def _run_edct(input_path: str, output_path: str) -> tuple[EdctDisplayResult, Path]:
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        return executor.submit(_run_edct_in_process, input_path, output_path).result()
 
 
 def _run_som(
@@ -274,13 +332,19 @@ def _create_sidebar(
     menu = QListWidget()
     menu.addItems(menu_items)
     menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    layout.addWidget(menu)
+    menu.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    layout.addWidget(menu, 1)
+
     back_button = QPushButton("Switch checker")
     back_button.setObjectName("quietButton")
     layout.addWidget(back_button)
-    layout.addStretch(1)
 
-    content_width = max(title_label.sizeHint().width(), menu.sizeHintForColumn(0) + 34, 142)
+    content_width = max(
+        title_label.sizeHint().width(),
+        menu.sizeHintForColumn(0) + 34,
+        back_button.sizeHint().width(),
+        146,
+    )
     menu.setFixedWidth(content_width)
     sidebar.setFixedWidth(
         content_width + layout.contentsMargins().left() + layout.contentsMargins().right()
@@ -603,10 +667,10 @@ class EdctPage(QWidget):
         if error or result is None:
             self._set_status(f"Analysis failed: {error or 'unknown error'}", "error")
             return
-        run_result = cast(EdctRunResult, result)
+        run_result = cast(EdctDisplayResult, result)
         self.result_path.setText(exported_path)
         self._set_status(
-            f"Run {run_result.run_id} finished | rows: {len(run_result.assessed_rows)} | "
+            f"Run {run_result.run_id} finished | rows: {run_result.rows_total} | "
             f"failed: {run_result.rows_failed}",
             "success",
         )
@@ -614,37 +678,9 @@ class EdctPage(QWidget):
         self.preview_empty.hide()
         self.history_page.refresh_runs()
 
-    def _fill_preview(self, result: EdctRunResult) -> None:
-        worksheet = result.workbook["Supplier Level"]
-        headers = {
-            str(cell.value).strip(): cell.column
-            for cell in worksheet[EDCT_HEADER_ROW]
-            if cell.value is not None
-        }
-        index_header = next(column for column in EDCT_INDEX_COLUMNS if column in headers)
-        rows = result.assessed_rows[:PREVIEW_ROWS]
-        self.preview_table.setRowCount(len(rows))
-        for display_row, row_key in enumerate(rows):
-            sheet_name, workbook_row = row_key
-            if sheet_name == EDCT_PN_SHEET:
-                punch, triplet = result.pn_values[workbook_row]
-                index = supplier_name = ""
-            else:
-                index = worksheet.cell(workbook_row, headers[index_header]).value
-                punch = worksheet.cell(workbook_row, headers["Supplier Punch code"]).value
-                supplier_name = worksheet.cell(workbook_row, headers["Supplier name"]).value
-                triplet = worksheet.cell(workbook_row, headers["Triplet COFOR"]).value
-            row_result = result.row_results[row_key]
-            values = (
-                sheet_name,
-                workbook_row,
-                index,
-                punch,
-                supplier_name,
-                triplet,
-                row_result.check,
-                row_result.comment,
-            )
+    def _fill_preview(self, result: EdctDisplayResult) -> None:
+        self.preview_table.setRowCount(len(result.preview_rows))
+        for display_row, values in enumerate(result.preview_rows):
             for column, value in enumerate(values):
                 self.preview_table.setItem(
                     display_row, column, QTableWidgetItem("" if value is None else str(value))
@@ -694,7 +730,7 @@ class EdctSettingsPage(QWidget):
         self.load_file_button = QPushButton("Load Headers from File")
         self.load_file_button.setObjectName("accentButton")
         self.reset_button = QPushButton("Reset to Defaults")
-        self.reset_button.setObjectName("quietButton")
+        self.reset_button.setObjectName("secondaryButton")
         self.save_button = QPushButton("Save Settings")
         self.save_button.setObjectName("primaryButton")
 
@@ -708,6 +744,7 @@ class EdctSettingsPage(QWidget):
         self.table.setColumnCount(len(self.headers))
         self.table.setHorizontalHeaderLabels(self.headers)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(38)
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )

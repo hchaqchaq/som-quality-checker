@@ -167,6 +167,24 @@ QComboBox QAbstractItemView {{
     outline: none;
 }}
 
+QTableWidget QLineEdit,
+QTableView QLineEdit,
+QTableWidget QComboBox,
+QTableView QComboBox {{
+    padding: 3px 8px;
+    border: 1px solid {COLORS["accent"]};
+    border-radius: 6px;
+    background-color: {COLORS["surface"]};
+    color: {COLORS["text"]};
+}}
+
+QTableWidget QLineEdit:focus,
+QTableView QLineEdit:focus {{
+    border: 2px solid {COLORS["accent"]};
+    padding: 2px 7px;
+}}
+
+
 QListWidget {{
     background-color: transparent;
     border: 0;
@@ -239,6 +257,18 @@ QPushButton#quietButton {{
     color: {COLORS["surface"]};
     border-color: #6f8084;
 }}
+
+QPushButton#secondaryButton {{
+    background-color: {COLORS["surface"]};
+    color: {COLORS["text"]};
+    border: 1px solid {COLORS["border"]};
+}}
+
+QPushButton#secondaryButton:hover {{
+    background-color: {COLORS["surface_muted"]};
+    border-color: {COLORS["accent"]};
+}}
+
 
 QPushButton#dangerButton {{
     background-color: {COLORS["danger"]};

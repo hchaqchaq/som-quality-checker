@@ -276,23 +276,18 @@ class ProjectNavigationTests(unittest.TestCase):
 
     def test_edct_preview_accepts_line_as_index_header(self) -> None:
         window = MainWindow(QualityCheckerController())
-        workbook = Workbook()
-        worksheet = workbook.active
-        worksheet.title = "Supplier Level"
-        worksheet.append([])
-        worksheet.append(["Line", "Supplier Punch code", "Supplier name", "Triplet COFOR"])
-        worksheet.append([7, "1003", "Supplier", "001-A"])
-        result = SimpleNamespace(
-            workbook=workbook,
-            assessed_rows=(("Supplier Level", 3),),
-            row_results={("Supplier Level", 3): EdctRowResult(0, "Quality check passed")},
-            pn_values={},
+        display_result = screens.EdctDisplayResult(
+            run_id=1,
+            rows_total=1,
+            rows_failed=0,
+            preview_rows=(
+                (("Supplier Level", 3, 7, "1003", "Supplier", "001-A", 0, "Quality check passed")),
+            ),
         )
 
-        window.edct_page._fill_preview(result)
+        window.edct_page._fill_preview(display_result)
 
         self.assertEqual(window.edct_page.preview_table.item(0, 2).text(), "7")
-        workbook.close()
 
     def test_checkable_combo_selection_and_reset(self) -> None:
         combo = CheckableComboBox("Choose")
@@ -436,7 +431,8 @@ class ProjectNavigationTests(unittest.TestCase):
 
     def test_analysis_helpers_delegate_and_dialog_cancellation_is_safe(self) -> None:
         som_result = object()
-        edct_result = object()
+        edct_result = MagicMock()
+        edct_display_result = object()
         with (
             patch.object(screens, "run_analysis", return_value=som_result),
             patch.object(screens, "export_result", return_value=Path("som.xlsx")),
@@ -445,8 +441,13 @@ class ProjectNavigationTests(unittest.TestCase):
         with (
             patch.object(screens, "run_edct_analysis", return_value=edct_result),
             patch.object(screens, "export_edct_result", return_value=Path("edct.xlsx")),
+            patch.object(screens, "_build_edct_display_result", return_value=edct_display_result),
         ):
-            self.assertEqual(screens._run_edct("in.xlsx", "out"), (edct_result, Path("edct.xlsx")))
+            self.assertEqual(
+                screens._run_edct_in_process("in.xlsx", "out"),
+                (edct_display_result, Path("edct.xlsx")),
+            )
+            edct_result.workbook.close.assert_called_once_with()
 
         window = MainWindow(QualityCheckerController())
         with patch.object(screens.QFileDialog, "getOpenFileName", return_value=("", "")):
@@ -555,8 +556,9 @@ class ProjectNavigationTests(unittest.TestCase):
         )
         window = MainWindow(HistoryController())
         self.addCleanup(window.close)
+        display_result = screens._build_edct_display_result(result)
         with patch.object(window.edct_history_page, "refresh_runs") as refresh:
-            window.edct_page._finished(result, "output.xlsx", "")
+            window.edct_page._finished(display_result, "output.xlsx", "")
 
         table = window.edct_page.preview_table
         self.assertEqual(
@@ -595,7 +597,8 @@ class ProjectNavigationTests(unittest.TestCase):
         refresh.assert_called_once_with()
 
         with patch.object(screens, "PREVIEW_ROWS", 2):
-            window.edct_page._fill_preview(result)
+            limited_result = screens._build_edct_display_result(result)
+            window.edct_page._fill_preview(limited_result)
         self.assertEqual(table.rowCount(), 2)
         self.assertEqual(table.item(1, 0).text(), "PN Level")
         self.assertEqual(table.item(1, 1).text(), "3")

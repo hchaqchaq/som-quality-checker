@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from multiprocessing import freeze_support
 
 from ..application import APP_LOGO_PATH, DB_PATH
 from ..db.repository import (
@@ -48,6 +49,7 @@ class QualityCheckerController:
 
 
 def run_app() -> None:
+    freeze_support()
     from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
 

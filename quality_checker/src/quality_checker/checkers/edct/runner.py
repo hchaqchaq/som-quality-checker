@@ -18,6 +18,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import TableColumn
+from openpyxl.worksheet.worksheet import Worksheet
 
 from ...application import DB_PATH
 from ...db.repository import (
@@ -948,11 +949,33 @@ def _merge_annotated_parts(
             output_archive.writestr(item, content)
 
 
+def _save_annotated_worksheets(
+    workbook: Workbook,
+    worksheets: tuple[Worksheet, ...],
+    path: Path,
+) -> None:
+    original_sheets = workbook._sheets
+    original_active_sheet_index = workbook._active_sheet_index
+    workbook._sheets = list(worksheets)
+    workbook._active_sheet_index = 0
+    try:
+        workbook.save(path)
+    finally:
+        workbook._sheets = original_sheets
+        workbook._active_sheet_index = original_active_sheet_index
+
+
 def _validate_analysis_workbook(path: Path) -> None:
     try:
         with path.open("rb") as exported_file:
-            workbook = load_workbook(exported_file, read_only=False, data_only=False)
-            workbook.close()
+            workbook = load_workbook(exported_file, read_only=True, data_only=False)
+            try:
+                for sheet_name in ("Supplier Level", EDCT_PN_SHEET):
+                    for row in workbook[sheet_name].iter_rows():
+                        for cell in row:
+                            _ = cell.value, cell.number_format
+            finally:
+                workbook.close()
     except Exception as exc:
         path.unlink(missing_ok=True)
         raise EdctLoadError(f"Analysis workbook validation failed: {exc}") from exc
@@ -1014,7 +1037,11 @@ def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
     with NamedTemporaryFile(dir=target_dir, suffix=".xlsx", delete=False) as temporary:
         annotated = Path(temporary.name)
     try:
-        result.workbook.save(annotated)
+        _save_annotated_worksheets(
+            result.workbook,
+            tuple(worksheet for worksheet, _ in worksheets),
+            annotated,
+        )
         with ZipFile(result.input_file) as source_archive:
             source_sheets = _worksheet_parts(source_archive)
             source_table = _table_part(

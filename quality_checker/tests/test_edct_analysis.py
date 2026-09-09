@@ -241,6 +241,19 @@ def remap_table_relationship(path: Path, relationship_id: str) -> None:
 
 
 class EdctWorkbookTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._settings_patcher = patch.object(
+            edct_analysis,
+            "load_edct_settings",
+            return_value=edct_analysis.EdctHeaderSettings.default(),
+        )
+        cls._settings_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._settings_patcher.stop()
+
     def test_pn_required_structure_stops_analysis_and_records_failure(self) -> None:
         for missing in ("PN Level", "Punch seller", "Triplet COFOR"):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
@@ -749,6 +762,35 @@ class EdctWorkbookTests(unittest.TestCase):
             original.close()
             exported.close()
 
+    def test_export_copies_unannotated_sheets_from_source(self) -> None:
+        class UnserializableValue:
+            def __str__(self) -> str:
+                raise RuntimeError("unannotated sheet was serialized")
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = build_edct_workbook(directory)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(
+                    input_path,
+                    connection=connection,
+                    settings=edct_analysis.EdctHeaderSettings.default(),
+                )
+                self.addCleanup(result.workbook.close)
+                unrelated_cell = result.workbook["Other Sheet"]["A1"]
+                unrelated_cell._value = UnserializableValue()
+                unrelated_cell.data_type = "s"
+                output_path = export_edct_result(result, directory)
+                self.assertIn("Other Sheet", result.workbook.sheetnames)
+                self.assertIsInstance(
+                    result.workbook["Other Sheet"]["A1"].value, UnserializableValue
+                )
+
+            exported = load_workbook(output_path, read_only=True)
+            self.assertEqual(exported["Other Sheet"]["A1"].value, "keep me")
+            exported.close()
+            result.workbook.close()
+
     def test_optional_phone_and_shipping_columns_are_ignored_and_preserved(self) -> None:
         optional_columns = ("Phone", "Phone2", "Shipping location")
         with tempfile.TemporaryDirectory() as temp:
@@ -977,7 +1019,11 @@ class EdctWorkbookTests(unittest.TestCase):
             connection = sqlite3.connect(":memory:")
             connection.row_factory = sqlite3.Row
             try:
-                result = run_edct_analysis(path, connection=connection)
+                result = run_edct_analysis(
+                    path,
+                    connection=connection,
+                    settings=edct_analysis.EdctHeaderSettings.default(),
+                )
                 original_merge = edct_analysis._merge_annotated_parts
 
                 def merge_then_corrupt(*args, **kwargs) -> None:

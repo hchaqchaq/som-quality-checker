@@ -67,3 +67,7 @@ docs/superpowers/
 # Office temporary files
 ~$*.xlsx
 ~$*.xlsm
+
+.agents
+.codex
+AGENTS.md

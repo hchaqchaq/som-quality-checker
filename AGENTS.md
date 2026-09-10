@@ -102,3 +102,6 @@ Triage uses the five default canonical labels. See `docs/agents/triage-labels.md
 
 This is a single-context repository using root `CONTEXT.md` and system-wide ADRs under `docs/adr/`. See
 `docs/agents/domain.md`.
+
+## User-Rules
+Make sure to never commit any changes until the user has approved them. Always ask for user approval before committing any changes.

@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 
 from ...application import DATA_DIR, ensure_data_dir
 from .config import (
+    EDCT_COFOR_TEMPLATE_HEADER_ROW,
     EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
     EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_HEADER_ROW,
@@ -159,23 +160,21 @@ def inspect_workbook_headers(path: Path | str) -> dict[str, list[str]]:
     try:
         results: dict[str, list[str]] = {}
         sheet_header_rows = {
-            SUPPLIER_LEVEL_SHEET: EDCT_HEADER_ROW,
-            OPEN_TASK_SHEET: EDCT_HEADER_ROW,
-            EDCT_PN_SHEET: EDCT_PN_HEADER_ROW,
-            EDCT_COFOR_TEMPLATE_SHEET: 1,
+            SUPPLIER_LEVEL_SHEET: (EDCT_HEADER_ROW,),
+            OPEN_TASK_SHEET: (EDCT_HEADER_ROW,),
+            EDCT_PN_SHEET: (EDCT_PN_HEADER_ROW,),
+            EDCT_COFOR_TEMPLATE_SHEET: (EDCT_COFOR_TEMPLATE_HEADER_ROW,),
         }
-        for sheet_name, header_row in sheet_header_rows.items():
+        for sheet_name, header_rows in sheet_header_rows.items():
             if sheet_name in workbook.sheetnames:
                 ws = workbook[sheet_name]
                 headers: list[str] = []
-                for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                    if row_idx == header_row:
-                        for val in row:
-                            if val is not None:
-                                text = str(val).strip()
-                                if text and text not in headers:
-                                    headers.append(text)
-                        break
+                for row_idx in header_rows:
+                    for cell in ws[row_idx]:
+                        if cell.value is not None:
+                            text = str(cell.value).strip()
+                            if text and text not in headers:
+                                headers.append(text)
                 results[sheet_name] = headers
             else:
                 results[sheet_name] = []

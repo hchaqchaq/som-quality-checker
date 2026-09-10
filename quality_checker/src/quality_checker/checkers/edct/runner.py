@@ -33,8 +33,7 @@ from ...db.repository import (
 from .config import (
     EDCT_COFOR_COLUMNS,
     EDCT_COFOR_REQUEST_DATE_COLUMN,
-    EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW,
-    EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
+    EDCT_COFOR_TEMPLATE_HEADER_ROW,
     EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
     EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_DATE_COLUMNS,
@@ -173,14 +172,12 @@ def _open_task_punches(workbook, settings: EdctHeaderSettings) -> set[str]:
     }
 
 
-def _cofor_template_punches(workbook) -> set[str]:
+def _cofor_template_punches(workbook, column: int) -> set[str]:
     worksheet = workbook[EDCT_COFOR_TEMPLATE_SHEET]
     return {
         punch
-        for row in range(EDCT_COFOR_TEMPLATE_FIRST_DATA_ROW, worksheet.max_row + 1)
-        if (
-            punch := _normalized_choice(worksheet.cell(row, EDCT_COFOR_TEMPLATE_PUNCH_COLUMN).value)
-        )
+        for row in range(EDCT_COFOR_TEMPLATE_HEADER_ROW + 1, worksheet.max_row + 1)
+        if (punch := _normalized_choice(worksheet.cell(row, column).value))
     }
 
 
@@ -188,6 +185,7 @@ def _evaluate_business_rules(
     workbook,
     headers: dict[str, int],
     assessed_rows: tuple[int, ...],
+    cofor_template_column: int,
     analysis_date: date,
     settings: EdctHeaderSettings,
 ) -> tuple[dict[int, EdctRowResult], Counter[tuple[str, str]]]:
@@ -211,7 +209,7 @@ def _evaluate_business_rules(
     triple_status_values = {item.casefold() for item in EDCT_TRIPLE_STATUS_VALUES}
     portal_values = {item.casefold() for item in EDCT_PORTAL_VALUES}
     edi_mode_values = {item.casefold() for item in EDCT_EDI_MODE_VALUES}
-    cofor_template_punches = _cofor_template_punches(workbook)
+    cofor_template_punches = _cofor_template_punches(workbook, cofor_template_column)
     if assessed_rows:
         reference_row = assessed_rows[0]
         for column in EDCT_FORMULA_COLUMNS:
@@ -603,17 +601,15 @@ def run_edct_analysis(
         expected_cofor_header = active_settings.get_header(
             EDCT_COFOR_TEMPLATE_SHEET, EDCT_COFOR_TEMPLATE_PUNCH_HEADER
         )
+        cofor_template_column: int | None = None
         if EDCT_COFOR_TEMPLATE_SHEET in workbook.sheetnames:
-            punch_header = (
-                workbook[EDCT_COFOR_TEMPLATE_SHEET]
-                .cell(
-                    1,
-                    EDCT_COFOR_TEMPLATE_PUNCH_COLUMN,
-                )
-                .value
+            cofor_template_headers = _header_map(
+                workbook[EDCT_COFOR_TEMPLATE_SHEET],
+                EDCT_COFOR_TEMPLATE_HEADER_ROW,
             )
-            if punch_header != expected_cofor_header:
-                missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({expected_cofor_header})")
+            cofor_template_column = cofor_template_headers.get(expected_cofor_header)
+            if cofor_template_column is None:
+                missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.{expected_cofor_header}")
         if missing_sheets or missing_columns:
             workbook.close()
             parts = []
@@ -622,6 +618,7 @@ def run_edct_analysis(
             if missing_columns:
                 parts.append(f"columns: {', '.join(missing_columns)}")
             raise EdctLoadError(f"Missing required structure: {'; '.join(parts)}")
+        assert cofor_template_column is not None
 
         supplier = workbook["Supplier Level"]
         if supplier_index_header in headers:
@@ -643,6 +640,7 @@ def run_edct_analysis(
             workbook,
             headers,
             supplier_rows,
+            cofor_template_column,
             analysis_date or date.today(),
             active_settings,
         )

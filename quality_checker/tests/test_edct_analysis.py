@@ -90,8 +90,7 @@ def build_edct_workbook(
         open_task.append([1003])
     if include_cofor_template:
         cofor_template = workbook.create_sheet("Template-Cofor-Creation")
-        cofor_template["D1"] = "Punch Code"
-        cofor_template["D2"] = "=D3"
+        cofor_template["D2"] = "Punch Code"
         cofor_template["D3"] = "9999"
     workbook.create_sheet("Other Sheet")["A1"] = "keep me"
     pn = workbook.create_sheet("PN Level")
@@ -1117,6 +1116,84 @@ class EdctWorkbookTests(unittest.TestCase):
 
                 self.assertEqual(result.row_results[("Supplier Level", 3)].check, expected_check)
 
+    def test_all_input_sheets_resolve_columns_by_header_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {"Triplet COFOR": "9999"},
+                    4: {"Triplet COFOR": "8888"},
+                },
+                pn_rows=(("1003", "9999"),),
+            )
+            workbook = load_workbook(path)
+
+            supplier = workbook["Supplier Level"]
+            supplier_headers = [cell.value for cell in supplier[2]]
+            punch_column = supplier_headers.index("Supplier Punch code") + 1
+            name_column = supplier_headers.index("Supplier name") + 1
+            for row in range(1, supplier.max_row + 1):
+                punch_value = supplier.cell(row, punch_column).value
+                supplier.cell(row, punch_column).value = supplier.cell(row, name_column).value
+                supplier.cell(row, name_column).value = punch_value
+
+            open_task = workbook["Open Task"]
+            open_task["G2"] = open_task["A2"].value
+            open_task["G3"] = open_task["A3"].value
+            open_task["A2"] = None
+            open_task["A3"] = None
+
+            template = workbook["Template-Cofor-Creation"]
+            template["H2"] = template["D2"].value
+            template["H3"] = template["D3"].value
+            template["D2"] = None
+            template["D3"] = None
+
+            pn = workbook["PN Level"]
+            pn["F1"] = pn["A1"].value
+            pn["F2"] = pn["A2"].value
+            pn["H1"] = pn["B1"].value
+            pn["H2"] = pn["B2"].value
+            pn["A1"] = pn["A2"] = None
+            pn["B1"] = pn["B2"] = None
+
+            workbook.save(path)
+            workbook.close()
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+
+            self.assertIn(("Supplier Level", 3), result.row_results)
+            self.assertIn(("PN Level", 2), result.row_results)
+            result.workbook.close()
+
+    def test_cofor_template_uses_second_row_headers_without_fixed_column(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {
+                        "Supplier Punch code": "1003",
+                        "Creation of Cofors request date": "10/08/2026",
+                    }
+                },
+            )
+            workbook = load_workbook(path)
+            template = workbook["Template-Cofor-Creation"]
+            template["D1"] = None
+            template["D2"] = None
+            template["D3"] = None
+            template["E2"] = "Punch Code"
+            template["E3"] = "1003"
+            workbook.save(path)
+            workbook.close()
+
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+            result.workbook.close()
+
     def test_request_date_requires_supplier_punch_in_cofor_template(self) -> None:
         scenarios = (
             ("matching punch", " 1003 ", 0),
@@ -1199,10 +1276,10 @@ class EdctWorkbookTests(unittest.TestCase):
         scenarios = (
             ("missing sheet", False, None, "Template-Cofor-Creation"),
             (
-                "wrong D1 header",
+                "wrong row 2 header",
                 True,
                 "Wrong header",
-                r"Template-Cofor-Creation\.D1 \(Punch Code\)",
+                r"Template-Cofor-Creation\.Punch Code",
             ),
         )
         for label, include_sheet, header, expected_error in scenarios:
@@ -1213,7 +1290,7 @@ class EdctWorkbookTests(unittest.TestCase):
                 )
                 if header is not None:
                     workbook = load_workbook(path)
-                    workbook["Template-Cofor-Creation"]["D1"] = header
+                    workbook["Template-Cofor-Creation"]["D2"] = header
                     workbook.save(path)
                     workbook.close()
 
@@ -1574,8 +1651,7 @@ class EdctWorkbookTests(unittest.TestCase):
             open_task.append([1003])
 
             cofor_template = workbook.create_sheet("Template-Cofor-Creation")
-            cofor_template["D1"] = "Punch Code"
-            cofor_template["D2"] = "=D3"
+            cofor_template["D2"] = "Punch Code"
             cofor_template["D3"] = "9999"
 
             pn = workbook.create_sheet("PN Level")

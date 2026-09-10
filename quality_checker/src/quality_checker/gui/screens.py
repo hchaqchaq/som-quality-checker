@@ -555,7 +555,7 @@ def _edct_structure_error(path: Path | str) -> str | None:
         EDCT_COFOR_TEMPLATE_SHEET, EDCT_COFOR_TEMPLATE_PUNCH_HEADER
     )
     if template_headers and configured_template_header not in template_headers:
-        missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({configured_template_header})")
+        missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.{configured_template_header}")
     if not missing_sheets and not missing_columns:
         return None
     details: list[str] = []

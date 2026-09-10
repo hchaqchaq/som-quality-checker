@@ -367,11 +367,13 @@ class ProjectNavigationTests(unittest.TestCase):
                 "quality_checker.gui.screens.QFileDialog.getOpenFileName",
                 return_value=("input.xlsx", ""),
             ),
-            patch.object(page, "_load_filter_values") as load,
+            patch("quality_checker.gui.screens.load_excel", return_value=frame),
+            patch("quality_checker.gui.screens._show_file_loaded_popup") as popup,
         ):
             page._pick_input_file()
         self.assertEqual(page.input_file.text(), "input.xlsx")
-        load.assert_called_once_with("input.xlsx")
+        self.assertIn("successfully", page.status.text())
+        popup.assert_called_once_with(page, "input.xlsx")
         with patch(
             "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/output"
         ):
@@ -414,11 +416,16 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertIn("Select an analysis run", history.columns_status.text())
 
         page = window.edct_page
-        with patch(
-            "quality_checker.gui.screens.QFileDialog.getOpenFileName",
-            return_value=("edct.xlsx", ""),
+        with (
+            patch(
+                "quality_checker.gui.screens.QFileDialog.getOpenFileName",
+                return_value=("edct.xlsx", ""),
+            ),
+            patch("quality_checker.gui.screens._edct_structure_error", return_value=None),
+            patch("quality_checker.gui.screens._show_file_loaded_popup") as popup,
         ):
             page._pick_input()
+        popup.assert_called_once_with(page, "edct.xlsx")
         with patch(
             "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/out"
         ):

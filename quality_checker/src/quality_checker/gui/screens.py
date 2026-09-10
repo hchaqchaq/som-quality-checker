@@ -34,10 +34,18 @@ from PyQt6.QtWidgets import (
 )
 
 from ..application import APP_LOGO_PATH, PREVIEW_ROWS
-from ..checkers.edct.config import EDCT_HEADER_ROW, EDCT_INDEX_COLUMNS, EDCT_PN_SHEET
+from ..checkers.edct.config import (
+    EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
+    EDCT_COFOR_TEMPLATE_SHEET,
+    EDCT_HEADER_ROW,
+    EDCT_INDEX_COLUMNS,
+    EDCT_PN_REQUIRED_COLUMNS,
+    EDCT_PN_SHEET,
+    EDCT_REQUIRED_COLUMNS,
+    EDCT_REQUIRED_SHEETS,
+)
 from ..checkers.edct.runner import EdctRunResult, export_edct_result, run_edct_analysis
 from ..checkers.edct.settings import (
-    EDCT_COFOR_TEMPLATE_SHEET,
     OPEN_TASK_SHEET,
     SUPPLIER_LEVEL_SHEET,
     EdctHeaderSettings,
@@ -495,6 +503,69 @@ class ProjectSelectionPage(QWidget):
         return f"Latest run: {rows[0]['started_at']}"
 
 
+def _show_file_loaded_popup(parent: QWidget, path: Path | str) -> None:
+    popup = QMessageBox(parent)
+    popup.setWindowTitle("Workbook loaded")
+    popup.setText(f"{Path(path).name} loaded successfully.")
+    popup.setIcon(QMessageBox.Icon.Information)
+    popup.setStandardButtons(QMessageBox.StandardButton.Ok)
+    popup.setStyleSheet(
+        """
+        QMessageBox { background-color: #f0fdf4; }
+        QMessageBox QLabel { color: #166534; font-weight: 600; }
+        QMessageBox QPushButton {
+            background-color: #15803d;
+            color: white;
+            border: 0;
+            border-radius: 4px;
+            min-width: 84px;
+            padding: 7px 14px;
+        }
+        QMessageBox QPushButton:hover { background-color: #166534; }
+        """
+    )
+    popup.exec()
+
+
+def _edct_structure_error(path: Path | str) -> str | None:
+    settings = load_edct_settings()
+    try:
+        detected = inspect_workbook_headers(path)
+    except Exception as exc:
+        return f"Workbook rejected — unable to read Excel file: {exc}"
+    missing_sheets = [sheet for sheet in EDCT_REQUIRED_SHEETS if not detected.get(sheet)]
+    missing_columns: list[str] = []
+    supplier_headers = set(detected.get("Supplier Level", []))
+    for column in EDCT_REQUIRED_COLUMNS:
+        configured = settings.get_header("Supplier Level", column)
+        if column != "Index" and configured not in supplier_headers:
+            missing_columns.append(configured)
+    if not any(
+        settings.get_header("Supplier Level", column) in supplier_headers
+        for column in EDCT_INDEX_COLUMNS
+    ):
+        missing_columns.append("Index or Line")
+    pn_headers = set(detected.get(EDCT_PN_SHEET, []))
+    for column in EDCT_PN_REQUIRED_COLUMNS:
+        configured = settings.get_header(EDCT_PN_SHEET, column)
+        if configured not in pn_headers:
+            missing_columns.append(f"{EDCT_PN_SHEET}.{configured}")
+    template_headers = detected.get(EDCT_COFOR_TEMPLATE_SHEET, [])
+    configured_template_header = settings.get_header(
+        EDCT_COFOR_TEMPLATE_SHEET, EDCT_COFOR_TEMPLATE_PUNCH_HEADER
+    )
+    if template_headers and configured_template_header not in template_headers:
+        missing_columns.append(f"{EDCT_COFOR_TEMPLATE_SHEET}.D1 ({configured_template_header})")
+    if not missing_sheets and not missing_columns:
+        return None
+    details: list[str] = []
+    if missing_sheets:
+        details.append(f"missing sheets: {', '.join(missing_sheets)}")
+    if missing_columns:
+        details.append(f"missing required columns: {', '.join(missing_columns)}")
+    return "Workbook rejected — " + "; ".join(details)
+
+
 class EdctPage(QWidget):
     status_changed = pyqtSignal(str)
     preview_columns = (
@@ -574,7 +645,6 @@ class EdctPage(QWidget):
         preview_card = _create_section_card(
             "Preview", "First rows from the latest analysis workbook."
         )
-        preview_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_layout = cast(QVBoxLayout, preview_card.layout())
         self.preview_empty = QLabel("Preview rows will appear here after an analysis run.")
         self.preview_empty.setObjectName("emptyState")
@@ -630,7 +700,13 @@ class EdctPage(QWidget):
             "Excel files (*.xlsx *.xlsm)",
         )
         if selected:
+            error = _edct_structure_error(selected)
+            if error:
+                self._set_status(error, "error")
+                return
             self.input_file.setText(selected)
+            self._set_status(f"Workbook loaded successfully: {Path(selected).name}", "success")
+            _show_file_loaded_popup(self, selected)
 
     def _pick_output(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -1127,9 +1203,6 @@ class WelcomePage(QWidget):
         preview_card_layout.addWidget(self.preview_empty)
         self.preview_table = QTableWidget()
         self.preview_table.setAlternatingRowColors(True)
-        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.preview_table.horizontalHeader().setStretchLastSection(True)
-        self.preview_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.preview_table.setMinimumHeight(200)
         preview_card_layout.addWidget(self.preview_table)
         layout.addWidget(preview_card)
@@ -1181,8 +1254,20 @@ class WelcomePage(QWidget):
             "Excel files (*.xlsx *.xls *.xlsm)",
         )
         if selected_file:
+            try:
+                dataframe = load_excel(selected_file)
+            except Exception as exc:
+                self._reset_filter_values(f"Workbook rejected: {exc}")
+                self.input_file.clear()
+                self._set_status(f"Workbook rejected — {exc}", level="error")
+                return
             self.input_file.setText(selected_file)
-            self._load_filter_values(selected_file)
+            self._set_filter_values(dataframe)
+            self._set_status(
+                f"Workbook loaded successfully: {Path(selected_file).name} | filters loaded",
+                level="success",
+            )
+            _show_file_loaded_popup(self, selected_file)
 
     def _pick_output_directory(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
@@ -1218,13 +1303,14 @@ class WelcomePage(QWidget):
                 f"Selected input file, but filters could not be loaded: {exc}", level="warning"
             )
             return
+        self._set_filter_values(dataframe)
+        self._set_status(f"Selected input file: {input_path} | filters loaded")
 
+    def _set_filter_values(self, dataframe) -> None:
         for column in self.filter_columns:
             combo = self.filter_combos[column]
             values = self._distinct_column_values(dataframe, column)
             combo.set_values(values)
-
-        self._set_status(f"Selected input file: {input_path} | filters loaded")
 
     def _reset_filter_values(self, message: str) -> None:
         for combo in self.filter_combos.values():

@@ -14,7 +14,8 @@ from quality_checker.checkers.edct.settings import (
     save_edct_settings,
 )
 from quality_checker.gui.app import QualityCheckerController
-from quality_checker.gui.screens import EdctSettingsPage, MainWindow
+from quality_checker.gui.main_window import MainWindow
+from quality_checker.gui.pages.edct import EdctSettingsPage
 
 
 class TestEdctSettingsGui(unittest.TestCase):

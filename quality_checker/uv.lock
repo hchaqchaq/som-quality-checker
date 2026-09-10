@@ -298,7 +298,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "pandas", specifier = ">=2.2.0" },
+    { name = "pandas", specifier = ">=3.0.2" },
     { name = "pyqt6", specifier = ">=6.7.1" },
 ]
 

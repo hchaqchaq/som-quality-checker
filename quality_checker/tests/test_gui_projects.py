@@ -15,16 +15,19 @@ from openpyxl import Workbook
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
-from quality_checker.checkers.edct.runner import EdctRowResult
-from quality_checker.gui import app as gui_app
-from quality_checker.gui import screens, styles
-from quality_checker.gui.app import QualityCheckerController
-from quality_checker.gui.screens import (
-    AnalysisWorker,
-    CheckableComboBox,
-    MainWindow,
-    ResponsiveColumns,
+from quality_checker.checkers.edct.models import (
+    EdctAssessedRow,
+    EdctRowResult,
+    EdctRunResult,
 )
+from quality_checker.gui import app as gui_app
+from quality_checker.gui import styles, widgets, workers
+from quality_checker.gui.app import QualityCheckerController
+from quality_checker.gui.main_window import MainWindow
+from quality_checker.gui.pages import edct as edct_pages
+from quality_checker.gui.pages import som as som_pages
+from quality_checker.gui.widgets import CheckableComboBox, ResponsiveColumns
+from quality_checker.gui.workers import AnalysisWorker
 
 
 class HistoryController(QualityCheckerController):
@@ -276,7 +279,7 @@ class ProjectNavigationTests(unittest.TestCase):
 
     def test_edct_preview_accepts_line_as_index_header(self) -> None:
         window = MainWindow(QualityCheckerController())
-        display_result = screens.EdctDisplayResult(
+        display_result = workers.EdctDisplayResult(
             run_id=1,
             rows_total=1,
             rows_failed=0,
@@ -364,29 +367,30 @@ class ProjectNavigationTests(unittest.TestCase):
 
         with (
             patch(
-                "quality_checker.gui.screens.QFileDialog.getOpenFileName",
+                "quality_checker.gui.pages.som.QFileDialog.getOpenFileName",
                 return_value=("input.xlsx", ""),
             ),
-            patch("quality_checker.gui.screens.load_excel", return_value=frame),
-            patch("quality_checker.gui.screens._show_file_loaded_popup") as popup,
+            patch.object(som_pages, "load_excel", return_value=frame),
+            patch.object(som_pages, "_show_file_loaded_popup") as popup,
         ):
             page._pick_input_file()
         self.assertEqual(page.input_file.text(), "input.xlsx")
         self.assertIn("successfully", page.status.text())
         popup.assert_called_once_with(page, "input.xlsx")
         with patch(
-            "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/output"
+            "quality_checker.gui.pages.som.QFileDialog.getExistingDirectory",
+            return_value="C:/output",
         ):
             page._pick_output_directory()
         self.assertEqual(page.output_dir.text(), "C:/output")
 
-        with patch("quality_checker.gui.screens.load_excel", return_value=frame):
+        with patch.object(som_pages, "load_excel", return_value=frame):
             page._load_filter_values("input.xlsx")
         page.filter_combos["Plant"]._toggle_item(page.filter_combos["Plant"].model().index(1, 0))
         filters = page._selected_scope_filters()
         self.assertEqual(filters[0].allowed_values, ("A",))
         with patch(
-            "quality_checker.gui.screens.load_excel", side_effect=ValueError("bad workbook")
+            "quality_checker.gui.pages.som.load_excel", side_effect=ValueError("bad workbook")
         ):
             page._load_filter_values("bad.xlsx")
         self.assertIn("could not be loaded", page.status.text())
@@ -418,16 +422,17 @@ class ProjectNavigationTests(unittest.TestCase):
         page = window.edct_page
         with (
             patch(
-                "quality_checker.gui.screens.QFileDialog.getOpenFileName",
+                "quality_checker.gui.pages.edct.QFileDialog.getOpenFileName",
                 return_value=("edct.xlsx", ""),
             ),
-            patch("quality_checker.gui.screens._edct_structure_error", return_value=None),
-            patch("quality_checker.gui.screens._show_file_loaded_popup") as popup,
+            patch.object(edct_pages, "_edct_structure_error", return_value=None),
+            patch.object(edct_pages, "_show_file_loaded_popup") as popup,
         ):
             page._pick_input()
         popup.assert_called_once_with(page, "edct.xlsx")
         with patch(
-            "quality_checker.gui.screens.QFileDialog.getExistingDirectory", return_value="C:/out"
+            "quality_checker.gui.pages.edct.QFileDialog.getExistingDirectory",
+            return_value="C:/out",
         ):
             page._pick_output()
         self.assertEqual((page.input_file.text(), page.output_dir.text()), ("edct.xlsx", "C:/out"))
@@ -441,26 +446,32 @@ class ProjectNavigationTests(unittest.TestCase):
         edct_result = MagicMock()
         edct_display_result = object()
         with (
-            patch.object(screens, "run_analysis", return_value=som_result),
-            patch.object(screens, "export_result", return_value=Path("som.xlsx")),
+            patch.object(workers, "run_analysis", return_value=som_result),
+            patch.object(workers, "export_result", return_value=Path("som.xlsx")),
         ):
-            self.assertEqual(screens._run_som("in.xlsx", "out", ()), (som_result, Path("som.xlsx")))
+            self.assertEqual(workers._run_som("in.xlsx", "out", ()), (som_result, Path("som.xlsx")))
         with (
-            patch.object(screens, "run_edct_analysis", return_value=edct_result),
-            patch.object(screens, "export_edct_result", return_value=Path("edct.xlsx")),
-            patch.object(screens, "_build_edct_display_result", return_value=edct_display_result),
+            patch.object(workers, "run_edct_analysis", return_value=edct_result),
+            patch.object(workers, "export_edct_result", return_value=Path("edct.xlsx")),
+            patch.object(workers, "_build_edct_display_result", return_value=edct_display_result),
         ):
             self.assertEqual(
-                screens._run_edct_in_process("in.xlsx", "out"),
+                workers._run_edct_in_process("in.xlsx", "out"),
                 (edct_display_result, Path("edct.xlsx")),
             )
             edct_result.workbook.close.assert_called_once_with()
 
         window = MainWindow(QualityCheckerController())
-        with patch.object(screens.QFileDialog, "getOpenFileName", return_value=("", "")):
+        with (
+            patch.object(som_pages.QFileDialog, "getOpenFileName", return_value=("", "")),
+            patch.object(edct_pages.QFileDialog, "getOpenFileName", return_value=("", "")),
+        ):
             window.welcome_page._pick_input_file()
             window.edct_page._pick_input()
-        with patch.object(screens.QFileDialog, "getExistingDirectory", return_value=""):
+        with (
+            patch.object(som_pages.QFileDialog, "getExistingDirectory", return_value=""),
+            patch.object(edct_pages.QFileDialog, "getExistingDirectory", return_value=""),
+        ):
             window.welcome_page._pick_output_directory()
             window.edct_page._pick_output()
 
@@ -485,7 +496,11 @@ class ProjectNavigationTests(unittest.TestCase):
                 pass
 
         window = MainWindow(QualityCheckerController())
-        with patch.object(screens, "QThread", Thread), patch.object(AnalysisWorker, "moveToThread"):
+        with (
+            patch.object(som_pages, "QThread", Thread),
+            patch.object(edct_pages, "QThread", Thread),
+            patch.object(AnalysisWorker, "moveToThread"),
+        ):
             page = window.welcome_page
             page.input_file.setText("input.xlsx")
             page.output_dir.setText("out")
@@ -519,12 +534,12 @@ class ProjectNavigationTests(unittest.TestCase):
         window = MainWindow(QualityCheckerController())
         window._on_menu_changed(-1)
         window._on_edct_menu_changed(-1)
-        with patch.object(screens, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": True})):
-            with patch.object(screens, "QPixmap", return_value=QPixmap(1, 1)):
-                screens._create_sidebar("Test")
+        with patch.object(widgets, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": True})):
+            with patch.object(widgets, "QPixmap", return_value=QPixmap(1, 1)):
+                widgets._create_sidebar("Test")
                 MainWindow(QualityCheckerController())
-        with patch.object(screens, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": False})):
-            screens._create_sidebar("Test")
+        with patch.object(widgets, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": False})):
+            widgets._create_sidebar("Test")
             MainWindow(QualityCheckerController())
 
     def test_edct_success_previews_overlapping_sheet_rows_and_combined_totals(self) -> None:
@@ -543,7 +558,7 @@ class ProjectNavigationTests(unittest.TestCase):
         pn.append(["unknown-seller", "not assessed"])
         pn.append(['="1001"', '="wrong-triplet"'])
         pn.append(["1001", "001-A"])
-        result = screens.EdctRunResult(
+        result = EdctRunResult(
             5,
             Path("input.xlsx"),
             datetime.now(),
@@ -560,10 +575,39 @@ class ProjectNavigationTests(unittest.TestCase):
             False,
             None,
             pn_values={3: ("1001", "wrong-triplet"), 4: ("1001", "001-A")},
+            assessed_row_details=(
+                EdctAssessedRow(
+                    "Supplier Level",
+                    3,
+                    "I-1",
+                    "1001",
+                    "Supplier",
+                    "001-A",
+                    EdctRowResult(0, "Quality check passed"),
+                ),
+                EdctAssessedRow(
+                    "PN Level",
+                    3,
+                    "",
+                    "1001",
+                    "",
+                    "wrong-triplet",
+                    EdctRowResult(1, "Triplet COFOR wrong-triplet not allowed"),
+                ),
+                EdctAssessedRow(
+                    "PN Level",
+                    4,
+                    "",
+                    "1001",
+                    "",
+                    "001-A",
+                    EdctRowResult(0, "Quality check passed"),
+                ),
+            ),
         )
         window = MainWindow(HistoryController())
         self.addCleanup(window.close)
-        display_result = screens._build_edct_display_result(result)
+        display_result = workers._build_edct_display_result(result)
         with patch.object(window.edct_history_page, "refresh_runs") as refresh:
             window.edct_page._finished(display_result, "output.xlsx", "")
 
@@ -603,8 +647,8 @@ class ProjectNavigationTests(unittest.TestCase):
         self.assertTrue(window.edct_page.preview_empty.isHidden())
         refresh.assert_called_once_with()
 
-        with patch.object(screens, "PREVIEW_ROWS", 2):
-            limited_result = screens._build_edct_display_result(result)
+        with patch.object(workers, "PREVIEW_ROWS", 2):
+            limited_result = workers._build_edct_display_result(result)
             window.edct_page._fill_preview(limited_result)
         self.assertEqual(table.rowCount(), 2)
         self.assertEqual(table.item(1, 0).text(), "PN Level")
@@ -617,7 +661,7 @@ class ProjectNavigationTests(unittest.TestCase):
         with (
             patch("PyQt6.QtWidgets.QApplication", return_value=fake_qt),
             patch.object(gui_app, "QualityCheckerController", return_value=fake_controller),
-            patch.object(screens, "MainWindow", return_value=fake_window),
+            patch("quality_checker.gui.main_window.MainWindow", return_value=fake_window),
             patch.object(gui_app, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": False})),
         ):
             gui_app.run_app()
@@ -631,7 +675,7 @@ class ProjectNavigationTests(unittest.TestCase):
             patch("PyQt6.QtWidgets.QApplication", return_value=fake_qt),
             patch("PyQt6.QtGui.QIcon", return_value=MagicMock()),
             patch.object(gui_app, "QualityCheckerController", return_value=fake_controller),
-            patch.object(screens, "MainWindow", return_value=fake_window),
+            patch("quality_checker.gui.main_window.MainWindow", return_value=fake_window),
             patch.object(gui_app, "APP_LOGO_PATH", MagicMock(**{"exists.return_value": True})),
         ):
             gui_app.run_app()

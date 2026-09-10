@@ -64,10 +64,10 @@ docs/agents/
 docs/specs/
 docs/superpowers/
 
-# Office temporary files
-~$*.xlsx
-~$*.xlsm
-
+# Excel workbooks
+*.xlsx
+*.xlsm
+*.xls
 .agents
 .codex
 AGENTS.md

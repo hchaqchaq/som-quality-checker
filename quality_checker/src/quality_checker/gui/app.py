@@ -53,7 +53,7 @@ def run_app() -> None:
     from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
 
-    from .screens import MainWindow
+    from .main_window import MainWindow
 
     qt_app = QApplication(sys.argv)
     if APP_LOGO_PATH.exists():

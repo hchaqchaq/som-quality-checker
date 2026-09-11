@@ -22,19 +22,24 @@ from PyQt6.QtWidgets import (
 )
 
 from ...checkers.edct.config import EDCT_COFOR_TEMPLATE_SHEET, EDCT_PN_SHEET
-from ...checkers.edct.models import EdctLoadError
 from ...checkers.edct.settings import (
     OPEN_TASK_SHEET,
     SUPPLIER_LEVEL_SHEET,
     EdctHeaderSettings,
-    inspect_workbook_headers,
     load_edct_settings,
     save_edct_settings,
 )
-from ...checkers.edct.workbook import load_edct_workbook
+from ...checkers.edct.workbook import EdctInspectionResult
 from ..app import QualityCheckerController
 from ..widgets import ResponsiveColumns, _create_section_card
-from ..workers import AnalysisWorker, EdctDisplayResult, _run_edct
+from ..workers import (
+    AnalysisWorker,
+    EdctDisplayResult,
+    InspectionWorker,
+    _inspect_edct,
+    _inspect_sample_headers,
+    _run_edct,
+)
 from .history import HistoryPage
 
 
@@ -44,34 +49,7 @@ def _show_file_loaded_popup(parent: QWidget, path: Path | str) -> None:
     popup.setText(f"{Path(path).name} loaded successfully.")
     popup.setIcon(QMessageBox.Icon.Information)
     popup.setStandardButtons(QMessageBox.StandardButton.Ok)
-    popup.setStyleSheet(
-        """
-        QMessageBox { background-color: #f0fdf4; }
-        QMessageBox QLabel { color: #166534; font-weight: 600; }
-        QMessageBox QPushButton {
-            background-color: #15803d;
-            color: white;
-            border: 0;
-            border-radius: 4px;
-            min-width: 84px;
-            padding: 7px 14px;
-        }
-        QMessageBox QPushButton:hover { background-color: #166534; }
-        """
-    )
     popup.exec()
-
-
-def _edct_structure_error(path: Path | str) -> str | None:
-    settings = load_edct_settings()
-    try:
-        source = load_edct_workbook(path, settings)
-    except EdctLoadError as exc:
-        return f"Workbook rejected — {exc}"
-    except Exception as exc:
-        return f"Workbook rejected — unable to read Excel file: {exc}"
-    source.close()
-    return None
 
 
 class EdctPage(QWidget):
@@ -94,6 +72,10 @@ class EdctPage(QWidget):
         self._run_thread: QThread | None = None
         self._run_worker: AnalysisWorker | None = None
         self._busy = False
+        self._inspection_thread: QThread | None = None
+        self._inspection_worker: InspectionWorker | None = None
+        self._inspection_ready = False
+        self._inspected_settings: EdctHeaderSettings | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
@@ -140,6 +122,15 @@ class EdctPage(QWidget):
         self.status = QLabel("Choose an input workbook and output folder to begin.")
         self.status.setObjectName("statusNeutral")
         analysis_layout.addWidget(self.status)
+        self.inspection_details_button = QPushButton("Show inspection details")
+        self.inspection_details_button.setObjectName("secondaryButton")
+        self.inspection_details_button.setCheckable(True)
+        self.inspection_details_button.hide()
+        analysis_layout.addWidget(self.inspection_details_button)
+        self.inspection_details = QLabel()
+        self.inspection_details.setWordWrap(True)
+        self.inspection_details.hide()
+        analysis_layout.addWidget(self.inspection_details)
 
         analysis_layout.addWidget(QLabel("Exported workbook:"))
         self.result_path = QLineEdit()
@@ -162,7 +153,9 @@ class EdctPage(QWidget):
         self.preview_table.setHorizontalHeaderLabels(self.preview_columns)
         self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.preview_table.setAlternatingRowColors(True)
-        self.preview_table.horizontalHeader().setStretchLastSection(True)
+        preview_header = self.preview_table.horizontalHeader()
+        assert preview_header is not None
+        preview_header.setStretchLastSection(True)
         self.preview_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.preview_table.setMinimumHeight(200)
         preview_layout.addWidget(self.preview_table)
@@ -174,10 +167,15 @@ class EdctPage(QWidget):
         self.run_button.clicked.connect(self._run)
         self.input_file.textChanged.connect(self._update_run_enabled)
         self.output_dir.textChanged.connect(self._update_run_enabled)
+        self.inspection_details_button.toggled.connect(self.inspection_details.setVisible)
         self._update_run_enabled()
 
     def _update_run_enabled(self) -> None:
-        ready = bool(self.input_file.text().strip() and self.output_dir.text().strip())
+        ready = bool(
+            self._inspection_ready
+            and self.input_file.text().strip()
+            and self.output_dir.text().strip()
+        )
         self.run_button.setEnabled(ready and not self._busy)
 
     def _set_status(self, text: str, level: str = "neutral") -> None:
@@ -189,8 +187,10 @@ class EdctPage(QWidget):
         }
         self.status.setText(text)
         self.status.setObjectName(object_names[level])
-        self.status.style().unpolish(self.status)
-        self.status.style().polish(self.status)
+        style = self.status.style()
+        assert style is not None
+        style.unpolish(self.status)
+        style.polish(self.status)
         self.status_changed.emit(text)
 
     def _set_busy_state(self, busy: bool) -> None:
@@ -201,6 +201,8 @@ class EdctPage(QWidget):
         self._update_run_enabled()
 
     def _pick_input(self) -> None:
+        if self._inspection_thread is not None:
+            return
         selected, _ = QFileDialog.getOpenFileName(
             self,
             "Choose eDCT input workbook",
@@ -208,13 +210,77 @@ class EdctPage(QWidget):
             "Excel files (*.xlsx *.xlsm)",
         )
         if selected:
-            error = _edct_structure_error(selected)
-            if error:
-                self._set_status(error, "error")
-                return
-            self.input_file.setText(selected)
-            self._set_status(f"Workbook loaded successfully: {Path(selected).name}", "success")
-            _show_file_loaded_popup(self, selected)
+            self._start_inspection(selected)
+
+    def _start_inspection(self, selected: str) -> None:
+        self._inspection_ready = False
+        self._inspected_settings = None
+        self.input_file.setText(selected)
+        self.inspection_details.clear()
+        self.inspection_details.hide()
+        self.inspection_details_button.hide()
+        self._set_busy_state(True)
+        self._set_status("Opening workbook…", "progress")
+        settings = load_edct_settings()
+        self._inspection_thread = QThread(self)
+        self._inspection_worker = InspectionWorker(
+            lambda: _inspect_edct(
+                selected,
+                settings,
+                self._inspection_worker.progress.emit if self._inspection_worker else None,
+            )
+        )
+        self._inspection_worker.moveToThread(self._inspection_thread)
+        self._inspection_thread.started.connect(self._inspection_worker.run)
+        self._inspection_worker.progress.connect(
+            lambda message: self._set_status(message, "progress")
+        )
+        self._inspection_worker.finished.connect(self._inspection_finished)
+        self._inspection_worker.finished.connect(self._inspection_thread.quit)
+        self._inspection_worker.finished.connect(self._inspection_worker.deleteLater)
+        self._inspection_thread.finished.connect(self._inspection_thread.deleteLater)
+        self._inspection_thread.finished.connect(self._clear_inspection_worker)
+        self._inspection_thread.start()
+
+    def _inspection_finished(self, result: object, error: str) -> None:
+        self._set_busy_state(False)
+        if error or result is None:
+            message = error or "Workbook inspection failed"
+            self.inspection_details.setText(message)
+            self.inspection_details_button.setVisible(True)
+            self._set_status("Workbook rejected", "error")
+            return
+        inspection = cast(EdctInspectionResult, result)
+        self._inspection_ready = True
+        self._inspected_settings = inspection.resolved_settings()
+        details = []
+        for sheet, mappings in inspection.resolved_headers.items():
+            details.append(
+                f"{sheet}: "
+                + ", ".join(
+                    f"{canonical} → {physical}"
+                    + (" (alias)" if (sheet, canonical) in inspection.alias_matches else "")
+                    for canonical, physical in mappings.items()
+                )
+            )
+        self.inspection_details.setText("\n".join(details))
+        self.inspection_details_button.setVisible(True)
+        self._set_status(
+            f"Workbook ready: {Path(self.input_file.text()).name} | "
+            f"{len(inspection.validated_sheets)} worksheets validated",
+            "success",
+        )
+        self._update_run_enabled()
+
+    def _clear_inspection_worker(self) -> None:
+        self._inspection_worker = None
+        self._inspection_thread = None
+
+    def wait_for_workers(self) -> None:
+        for thread in (self._inspection_thread, self._run_thread):
+            if thread is not None and thread.isRunning():
+                thread.quit()
+                thread.wait()
 
     def _pick_output(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -234,10 +300,18 @@ class EdctPage(QWidget):
             self._set_status("Choose an input workbook and output folder.", "error")
             return
         self._set_busy_state(True)
-        self._set_status("Analysis in progress", "progress")
+        self._set_status("Loading workbook…", "progress")
         self._run_thread = QThread(self)
-        self._run_worker = AnalysisWorker(lambda: _run_edct(input_path, output_path))
+        self._run_worker = AnalysisWorker(
+            lambda: _run_edct(
+                input_path,
+                output_path,
+                self._run_worker.progress.emit if self._run_worker else None,
+                self._inspected_settings,
+            )
+        )
         self._run_worker.moveToThread(self._run_thread)
+        self._run_worker.progress.connect(lambda message: self._set_status(message, "progress"))
         self._run_thread.started.connect(self._run_worker.run)
         self._run_worker.finished.connect(self._finished)
         self._run_worker.finished.connect(self._run_thread.quit)
@@ -288,6 +362,8 @@ class EdctSettingsPage(QWidget):
     ) -> None:
         super().__init__(parent)
         self.settings_path = settings_path
+        self._inspection_thread: QThread | None = None
+        self._inspection_worker: InspectionWorker | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
@@ -328,14 +404,14 @@ class EdctSettingsPage(QWidget):
         self.table.setColumnCount(len(self.headers))
         self.table.setHorizontalHeaderLabels(self.headers)
         self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setDefaultSectionSize(38)
-        self.table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        vertical_header = self.table.verticalHeader()
+        horizontal_header = self.table.horizontalHeader()
+        assert vertical_header is not None
+        assert horizontal_header is not None
+        vertical_header.setDefaultSectionSize(38)
+        horizontal_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        horizontal_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        horizontal_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.table.setMinimumHeight(350)
         card_layout.addWidget(self.table)
@@ -343,6 +419,10 @@ class EdctSettingsPage(QWidget):
         self.status_label = QLabel("Settings ready")
         self.status_label.setObjectName("statusNeutral")
         card_layout.addWidget(self.status_label)
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setRange(0, 0)
+        self.loading_bar.hide()
+        card_layout.addWidget(self.loading_bar)
 
         layout.addWidget(card, 1)
 
@@ -407,21 +487,18 @@ class EdctSettingsPage(QWidget):
                 return opt
         return current_val
 
-    def apply_sample_workbook_headers(self, file_path: Path | str) -> None:
-        try:
-            detected = inspect_workbook_headers(file_path)
-        except Exception as exc:
-            self._set_status(f"Failed to inspect headers: {exc}", level="error")
-            return
-
+    def _apply_detected_headers(self, detected: dict[str, list[str]], file_name: str) -> None:
         total_detected = sum(len(headers) for headers in detected.values())
         if total_detected == 0:
             self._set_status("No headers found in the selected workbook.", level="error")
             return
 
         for row in range(self.table.rowCount()):
-            sheet = self.table.item(row, 0).text()
-            canonical = self.table.item(row, 1).text()
+            sheet_item = self.table.item(row, 0)
+            canonical_item = self.table.item(row, 1)
+            assert sheet_item is not None and canonical_item is not None
+            sheet = sheet_item.text()
+            canonical = canonical_item.text()
             current_val = self._get_row_value(row)
             sheet_headers = detected.get(sheet, [])
             if not sheet_headers:
@@ -437,7 +514,7 @@ class EdctSettingsPage(QWidget):
             self.table.setCellWidget(row, 2, combo)
 
         self._set_status(
-            f"Loaded headers from {Path(file_path).name}. Review dropdowns and click Save Settings.",
+            f"Loaded headers from {file_name}. Review dropdowns and click Save Settings.",
             level="success",
         )
 
@@ -449,8 +526,11 @@ class EdctSettingsPage(QWidget):
             EDCT_COFOR_TEMPLATE_SHEET: {},
         }
         for row in range(self.table.rowCount()):
-            sheet = self.table.item(row, 0).text()
-            canonical = self.table.item(row, 1).text()
+            sheet_item = self.table.item(row, 0)
+            canonical_item = self.table.item(row, 1)
+            assert sheet_item is not None and canonical_item is not None
+            sheet = sheet_item.text()
+            canonical = canonical_item.text()
             configured = self._get_row_value(row)
             if sheet in result:
                 result[sheet][canonical] = configured
@@ -482,17 +562,61 @@ class EdctSettingsPage(QWidget):
         }
         self.status_label.setText(text)
         self.status_label.setObjectName(object_names.get(level, "statusNeutral"))
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
+        style = self.status_label.style()
+        assert style is not None
+        style.unpolish(self.status_label)
+        style.polish(self.status_label)
         self.status_label.update()
         self.status_changed.emit(text)
 
     def _load_from_file(self) -> None:
+        if self._inspection_thread is not None:
+            return
         selected_file, _ = QFileDialog.getOpenFileName(
             self,
             "Choose sample Excel file",
             str(Path.home()),
-            "Excel files (*.xlsx *.xlsm *.xls)",
+            "Excel files (*.xlsx *.xlsm)",
         )
         if selected_file:
-            self.apply_sample_workbook_headers(selected_file)
+            self._start_sample_inspection(selected_file)
+
+    def _start_sample_inspection(self, selected_file: str) -> None:
+        self.load_file_button.setEnabled(False)
+        self.loading_bar.show()
+        self._set_status("Opening workbook…", "progress")
+        self._inspection_thread = QThread(self)
+        self._inspection_worker = InspectionWorker(lambda: _inspect_sample_headers(selected_file))
+        self._inspection_worker.moveToThread(self._inspection_thread)
+        self._inspection_thread.started.connect(self._inspection_worker.run)
+        self._inspection_worker.progress.connect(
+            lambda message: self._set_status(message, "progress")
+        )
+        self._inspection_worker.finished.connect(
+            lambda result, error: self._sample_inspection_finished(
+                result, error, Path(selected_file).name
+            )
+        )
+        self._inspection_worker.finished.connect(self._inspection_thread.quit)
+        self._inspection_worker.finished.connect(self._inspection_worker.deleteLater)
+        self._inspection_thread.finished.connect(self._inspection_thread.deleteLater)
+        self._inspection_thread.finished.connect(self._clear_sample_worker)
+        self._inspection_thread.start()
+
+    def _sample_inspection_finished(self, result: object, error: str, file_name: str) -> None:
+        self.load_file_button.setEnabled(True)
+        self.loading_bar.hide()
+        if error or not isinstance(result, dict):
+            self._set_status(f"Failed to inspect headers: {error or 'unknown error'}", "error")
+            return
+        self._apply_detected_headers(result, file_name)
+
+    def _clear_sample_worker(self) -> None:
+        self._inspection_worker = None
+        self._inspection_thread = None
+
+    def wait_for_workers(self) -> None:
+        thread = self._inspection_thread
+        if thread is not None and thread.isRunning():
+            thread.quit()
+            thread.wait()

@@ -7,14 +7,18 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 
 - Required worksheets: `Supplier Level`, `PN Level`, `Open Task`, and `Template-Cofor-Creation`.
 - `Supplier Level` headers are on row 2. `PN Level` headers are on row 1 and must include `Punch seller` and `Triplet COFOR`, as in the reference workbooks.
-- `Open Task` must contain `Punch Code`.
-- `Template-Cofor-Creation` must contain `Punch Code` in `D1`; reference values are read from `D3` downward.
+- `Open Task` must contain `Punch Code` on row 2.
+- `Template-Cofor-Creation` must contain `Punch Code` on row 2; reference values are read from row 3 downward.
 - Supplier rows are assessed when `Index` is populated; `Line` is used only when the `Index` header is absent. A blank `Index` never falls back to `Line` on an individual row.
 - `Supplier Punch code` identifies the supplier for the cross-sheet rules.
 - PN rows are assessed when their nonblank `Punch seller` matches a punch code from assessed supplier rows. PN assessment does not require `Index` or `Line`; blank and unknown sellers are not assessed.
 - `Supplier name` is included in the result preview.
 - Export requires table `Tabella2` on `Supplier Level`; missing tables stop export after analysis.
 - PN export does not require a table or a fixed table name; existing PN tables retain their ranges and definitions.
+
+Workbook selection inspects these worksheets and required columns in a read-only worker process before enabling analysis. Header matching trims surrounding whitespace, ignores case, honors configured mappings, accepts the explicit `Index`/`Line` and `Supplier Confimation`/`Supplier Confirmation` aliases, and rejects ambiguous matches. Extra columns are allowed. Selection inspection does not scan assessed rows, check `Tabella2`, or create an analysis run.
+
+The eDCT selection and Settings sample-workbook flows keep the GUI thread free and show indeterminate stage feedback. Analysis reports loading, PN validation, supplier validation, result preparation, export, and export verification stages at actual execution boundaries.
 
 ## Result
 

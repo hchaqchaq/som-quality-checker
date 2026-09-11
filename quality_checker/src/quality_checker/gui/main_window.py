@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from ..application import APP_LOGO_PATH
@@ -80,7 +80,9 @@ class MainWindow(QMainWindow):
     def _on_menu_changed(self, index: int) -> None:
         self.som_pages.setCurrentIndex(index)
         if index >= 0:
-            self.som_destination_label.setText(self.menu.item(index).text())
+            item = self.menu.item(index)
+            assert item is not None
+            self.som_destination_label.setText(item.text())
         if index == 1:
             self.history_page.refresh_runs()
 
@@ -95,6 +97,13 @@ class MainWindow(QMainWindow):
     def _on_edct_menu_changed(self, index: int) -> None:
         self.edct_pages.setCurrentIndex(index)
         if index >= 0:
-            self.edct_destination_label.setText(self.edct_menu.item(index).text())
+            item = self.edct_menu.item(index)
+            assert item is not None
+            self.edct_destination_label.setText(item.text())
         if index == 1:
             self.edct_history_page.refresh_runs()
+
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
+        self.edct_page.wait_for_workers()
+        self.edct_settings_page.wait_for_workers()
+        super().closeEvent(a0)

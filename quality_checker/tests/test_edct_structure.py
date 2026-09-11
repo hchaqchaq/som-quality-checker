@@ -21,6 +21,46 @@ from quality_checker.checkers.edct.config import (
 from quality_checker.checkers.edct.export import export_edct_result
 from quality_checker.checkers.edct.models import EdctLoadError
 from quality_checker.checkers.edct.runner import run_edct_analysis
+from quality_checker.checkers.edct.settings import EdctHeaderSettings
+from quality_checker.checkers.edct.workbook import inspect_edct_workbook
+
+
+def test_header_inspection_accepts_normalized_names_and_approved_aliases() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        path = build_edct_workbook(Path(temp))
+        workbook = load_workbook(path)
+        supplier = workbook["Supplier Level"]
+        headers = [cell.value for cell in supplier[2]]
+        supplier.cell(
+            2, headers.index("Supplier Confimation") + 1
+        ).value = "  supplier confirmation  "
+        pn = workbook["PN Level"]
+        pn["A1"] = "  PUNCH SELLER "
+        workbook.save(path)
+        workbook.close()
+
+        stages: list[str] = []
+        result = inspect_edct_workbook(
+            path,
+            EdctHeaderSettings.default(),
+            progress=stages.append,
+        )
+
+        assert result.ready
+        assert result.resolved_headers["Supplier Level"]["Supplier Confimation"] == (
+            "supplier confirmation"
+        )
+        assert result.resolved_headers["PN Level"]["Punch seller"] == "PUNCH SELLER"
+        assert ("Supplier Level", "Supplier Confimation") in result.alias_matches
+        assert stages == ["Checking worksheet structure…", "Checking required headers…"]
+
+        with closing(sqlite3.connect(":memory:")) as connection:
+            analysis = run_edct_analysis(
+                path,
+                connection=connection,
+                settings=result.resolved_settings(),
+            )
+        analysis.workbook.close()
 
 
 class EdctStructureTests(EdctTestCase):

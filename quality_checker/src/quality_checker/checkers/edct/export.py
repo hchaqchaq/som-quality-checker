@@ -307,9 +307,16 @@ def _validate_analysis_workbook(path: Path) -> None:
         raise EdctLoadError(f"Analysis workbook validation failed: {exc}") from exc
 
 
-def export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
+def export_edct_result(
+    result: EdctRunResult,
+    output_dir: Path | str,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> Path:
+    report = progress or (lambda _message: None)
     try:
-        return _export_edct_result(result, output_dir)
+        report("Exporting workbook…")
+        return _export_edct_result(result, output_dir, progress=report)
     except Exception as error:
         error_message = str(error)
 
@@ -320,7 +327,12 @@ def export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
         raise
 
 
-def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
+def _export_edct_result(
+    result: EdctRunResult,
+    output_dir: Path | str,
+    *,
+    progress: Callable[[str], None],
+) -> Path:
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     worksheets = (
@@ -382,6 +394,7 @@ def _export_edct_result(result: EdctRunResult, output_dir: Path | str) -> Path:
             replacement_parts["xl/styles.xml"] = "xl/styles.xml"
         _preserve_ooxml_extensions(result.input_file, annotated, replacement_parts)
         _merge_annotated_parts(result.input_file, annotated, target, replacement_parts)
+        progress("Verifying export…")
         _validate_analysis_workbook(target)
     except Exception:
         target.unlink(missing_ok=True)

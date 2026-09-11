@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,10 @@ SETTINGS_FILE_NAME = "edct_header_mappings.json"
 SUPPLIER_LEVEL_SHEET = "Supplier Level"
 OPEN_TASK_SHEET = "Open Task"
 OPEN_TASK_PUNCH_HEADER = "Punch Code"
+HEADER_ALIASES = {
+    (SUPPLIER_LEVEL_SHEET, "Index"): ("Line",),
+    (SUPPLIER_LEVEL_SHEET, "Supplier Confimation"): ("Supplier Confirmation",),
+}
 
 
 def get_default_supplier_level_headers() -> dict[str, str]:
@@ -80,7 +85,7 @@ class EdctHeaderSettings:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> EdctHeaderSettings:
+    def from_dict(cls, data: Mapping[str, object]) -> EdctHeaderSettings:
         default = cls.default()
 
         def merge_mapping(sheet_key: str, default_mapping: dict[str, str]) -> dict[str, str]:
@@ -115,15 +120,24 @@ class EdctHeaderSettings:
                 if not stripped:
                     errors.append(f"{sheet_name}: header for '{canonical}' cannot be empty.")
                     continue
-                normalized = stripped.casefold()
-                if normalized in seen_headers:
+                accepted = {
+                    canonical.strip().casefold(),
+                    stripped.casefold(),
+                    *(
+                        alias.strip().casefold()
+                        for alias in HEADER_ALIASES.get((sheet_name, canonical), ())
+                    ),
+                }
+                collisions = accepted.intersection(seen_headers)
+                if collisions:
+                    normalized = sorted(collisions)[0]
                     first_field = seen_headers[normalized]
                     errors.append(
-                        f"{sheet_name}: duplicate header '{configured.strip()}' configured for "
+                        f"{sheet_name}: duplicate or ambiguous header mapping for "
                         f"'{first_field}' and '{canonical}'."
                     )
-                else:
-                    seen_headers[normalized] = canonical
+                for normalized in accepted:
+                    seen_headers.setdefault(normalized, canonical)
         return errors
 
 

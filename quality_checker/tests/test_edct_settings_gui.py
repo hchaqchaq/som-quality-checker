@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -103,23 +105,21 @@ class TestEdctSettingsGui(unittest.TestCase):
             self.assertIn("reset", page.status_label.text().lower())
 
     def test_settings_page_load_from_sample_file(self) -> None:
-        from openpyxl import Workbook
         from PyQt6.QtWidgets import QComboBox
 
         with TemporaryDirectory() as temp_dir:
-            sample_path = Path(temp_dir) / "sample_edct.xlsx"
-            wb = Workbook()
-            ws_sup = wb.active
-            ws_sup.title = "Supplier Level"
-            ws_sup.append(["meta"])
-            ws_sup.append(["Index", "Code Fournisseur", "Supplier name"])
-
-            wb.save(sample_path)
-            wb.close()
-
             settings_path = Path(temp_dir) / "test_settings.json"
             page = EdctSettingsPage(settings_path=settings_path)
-            page.apply_sample_workbook_headers(sample_path)
+            page._sample_inspection_finished(
+                {
+                    "Supplier Level": ["Index", "Code Fournisseur", "Supplier name"],
+                    "PN Level": [],
+                    "Open Task": [],
+                    "Template-Cofor-Creation": [],
+                },
+                "",
+                "sample_edct.xlsx",
+            )
 
             # Check that row 0 (Index) has a QComboBox
             widget = page.table.cellWidget(0, 2)
@@ -146,6 +146,30 @@ class TestEdctSettingsGui(unittest.TestCase):
                 loaded.get_header("Supplier Level", "Supplier Punch code"),
                 "Code Fournisseur",
             )
+
+    def test_settings_sample_loading_completes_asynchronously(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            page = EdctSettingsPage(settings_path=Path(temp_dir) / "settings.json")
+            detected = {
+                "Supplier Level": ["Index", "Supplier Punch code"],
+                "PN Level": [],
+                "Open Task": [],
+                "Template-Cofor-Creation": [],
+            }
+            with patch(
+                "quality_checker.gui.pages.edct._inspect_sample_headers",
+                return_value=detected,
+            ):
+                page._start_sample_inspection("sample.xlsx")
+                self.assertFalse(page.load_file_button.isEnabled())
+                deadline = time.monotonic() + 2
+                while page._inspection_thread is not None and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    time.sleep(0.001)
+                self.app.processEvents()
+
+            self.assertTrue(page.load_file_button.isEnabled())
+            self.assertIn("Loaded headers", page.status_label.text())
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from time import perf_counter
@@ -73,7 +74,9 @@ def run_edct_analysis(
     *,
     analysis_date: date | None = None,
     settings: EdctHeaderSettings | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> EdctRunResult:
+    report = progress or (lambda _message: None)
     active_settings = settings if settings is not None else load_edct_settings()
     resolved_input = Path(input_path)
     started_at = datetime.now(UTC)
@@ -81,17 +84,21 @@ def run_edct_analysis(
     history, own_connection = _open_history(connection)
 
     try:
+        report("Loading workbook…")
         source = load_edct_workbook(resolved_input, active_settings)
         workbook = source.workbook
         headers = source.supplier_headers
         pn_headers = source.pn_headers
         supplier_rows = source.supplier_rows
         cofor_template_column = source.cofor_template_column
+        report("Checking PN Level…")
         pn_results, pn_values = validate_pn(source)
+        report("Checking Supplier Level…")
         supplier_results, rule_totals = validate_suppliers(
             source,
             analysis_date or date.today(),
         )
+        report("Preparing results…")
         row_results = {
             ("Supplier Level", row): row_result for row, row_result in supplier_results.items()
         }

@@ -160,12 +160,46 @@ class ProjectNavigationTests(unittest.TestCase):
     def test_analysis_requires_input_and_output_before_run(self) -> None:
         window = MainWindow(QualityCheckerController())
 
-        for page in (window.welcome_page, window.edct_page):
-            self.assertFalse(page.run_button.isEnabled())
-            page.input_file.setText("C:/input.xlsx")
-            self.assertFalse(page.run_button.isEnabled())
-            page.output_dir.setText("C:/output")
-            self.assertTrue(page.run_button.isEnabled())
+        som = window.welcome_page
+        self.assertFalse(som.run_button.isEnabled())
+        som.input_file.setText("C:/input.xlsx")
+        self.assertFalse(som.run_button.isEnabled())
+        som.output_dir.setText("C:/output")
+        self.assertTrue(som.run_button.isEnabled())
+
+        edct = window.edct_page
+        edct.input_file.setText("C:/input.xlsx")
+        edct.output_dir.setText("C:/output")
+        self.assertFalse(edct.run_button.isEnabled())
+        edct._inspection_ready = True
+        edct._update_run_enabled()
+        self.assertTrue(edct.run_button.isEnabled())
+
+    def test_edct_inspection_controls_analysis_readiness(self) -> None:
+        window = MainWindow(QualityCheckerController())
+        page = window.edct_page
+        page.input_file.setText("C:/valid.xlsx")
+        page.output_dir.setText("C:/output")
+        page._inspection_finished(
+            edct_pages.EdctInspectionResult(
+                resolved_headers={
+                    "Supplier Level": {"Index": "Index"},
+                    "PN Level": {"Punch seller": "Punch seller"},
+                    "Open Task": {"Punch Code": "Punch Code"},
+                    "Template-Cofor-Creation": {"Punch Code": "Punch Code"},
+                }
+            ),
+            "",
+        )
+
+        self.assertTrue(page.run_button.isEnabled())
+        self.assertIn("Workbook ready", page.status.text())
+        self.assertFalse(page.inspection_details_button.isHidden())
+
+        page._inspection_ready = False
+        page._inspection_finished(None, "Workbook rejected — missing required headers")
+        self.assertFalse(page.run_button.isEnabled())
+        self.assertIn("missing required headers", page.inspection_details.text())
 
     def test_analysis_columns_collapse_at_narrow_width(self) -> None:
         columns = ResponsiveColumns(QWidget(), QWidget())
@@ -425,17 +459,16 @@ class ProjectNavigationTests(unittest.TestCase):
                 "quality_checker.gui.pages.edct.QFileDialog.getOpenFileName",
                 return_value=("edct.xlsx", ""),
             ),
-            patch.object(edct_pages, "_edct_structure_error", return_value=None),
-            patch.object(edct_pages, "_show_file_loaded_popup") as popup,
+            patch.object(page, "_start_inspection") as start_inspection,
         ):
             page._pick_input()
-        popup.assert_called_once_with(page, "edct.xlsx")
+        start_inspection.assert_called_once_with("edct.xlsx")
         with patch(
             "quality_checker.gui.pages.edct.QFileDialog.getExistingDirectory",
             return_value="C:/out",
         ):
             page._pick_output()
-        self.assertEqual((page.input_file.text(), page.output_dir.text()), ("edct.xlsx", "C:/out"))
+        self.assertEqual(page.output_dir.text(), "C:/out")
         page._finished(None, "", "boom")
         self.assertIn("boom", page.status.text())
         page._clear_worker()

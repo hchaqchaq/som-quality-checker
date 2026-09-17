@@ -20,6 +20,10 @@ def _normalized_choice(value: object) -> str:
     return normalized_choice(value)
 
 
+def _normalized_triplet(value: object) -> str:
+    return _normalized_choice(value).replace("\u00a0", " ")
+
+
 def validate_pn(
     source: LoadedEdctWorkbook,
 ) -> tuple[dict[tuple[str, int], EdctRowResult], dict[int, tuple[object, object]]]:
@@ -97,7 +101,7 @@ def validate_pn(
             if not punch:
                 continue
             allowed = allowed_triplets[punch]
-            triplet = _normalized_choice(
+            triplet = _normalized_triplet(
                 resolved_value("Supplier Level", row, supplier_triplet_column)
             )
             if triplet:
@@ -111,7 +115,7 @@ def validate_pn(
                 continue
             triplet_value = resolved_value(EDCT_PN_SHEET, row, pn_triplet_column)
             pn_values[row] = (seller, triplet_value)
-            triplet = _normalized_choice(triplet_value)
+            triplet = _normalized_triplet(triplet_value)
             allowed = allowed_triplets[punch]
             if triplet and triplet in allowed:
                 row_result = EdctRowResult(0, "Quality check passed")

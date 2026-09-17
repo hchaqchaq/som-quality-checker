@@ -116,6 +116,45 @@ class EdctRuleTests(EdctTestCase):
             "Name - person@example.com", result.row_results[("Supplier Level", 3)].comment
         )
 
+    def test_cofor_separator_accepts_excel_non_breaking_spaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {
+                        "Effective kick-off date": "30/07/2026",
+                        "eSupplierConnect": "NOT",
+                        "B2B": "NOT",
+                        "New supplier portal": "NOT",
+                        "SPM": "NOT",
+                        "iTMS": "NOT",
+                        "Seller COFOR": "A00E0I\u00a0 01",
+                        "Manufacturer COFOR": "A00LYI \u00a001",
+                        "Shipper COFOR": "A001EE \u00a006",
+                    },
+                    4: {
+                        "Effective kick-off date": "30/07/2026",
+                        "eSupplierConnect": "NOT",
+                        "B2B": "NOT",
+                        "New supplier portal": "NOT",
+                        "SPM": "NOT",
+                        "iTMS": "NOT",
+                        "Seller COFOR": "A02FYY 01",
+                    },
+                },
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(
+                    path, connection=connection, analysis_date=date(2026, 7, 30)
+                )
+
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+        self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
+        self.assertIn(
+            "Invalid COFOR format: Seller COFOR = A02FYY 01",
+            result.row_results[("Supplier Level", 4)].comment,
+        )
+
     def test_creation_of_cofors_request_date_accepts_only_supported_dates(self) -> None:
         scenarios = (
             ("empty", "", "unmatched", 0),

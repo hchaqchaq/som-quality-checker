@@ -73,7 +73,7 @@ EDCT_EDI_MODE_VALUES = ("WEB EDI", "Standard EDI")
 EDCT_RULE_CATALOGUE_ROWS = (
     "| `Sales contact`, `Logistic contact` | `Effective kick-off date` is populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
     "| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants` | When populated | Yes | Plain emails separated by `;`; trailing semicolons are ignored |",
-    "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters |",
+    "| `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor` | `Effective kick-off date` is populated | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters; Excel non-breaking spaces count as spaces |",
     "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD/MM/YYYY` |",
     f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD/MM/YYYY` |",
     f"| `Supplier Punch code` | `{EDCT_COFOR_REQUEST_DATE_COLUMN}` is populated | No | Exact Punch Code from `Template-Cofor-Creation` column D, rows 3 onward |",
@@ -85,7 +85,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |",
     "| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |",
     "| `OPEN TASK` | Cross-checked for every assessed row | Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise |",
-    "| `PN Level.Triplet COFOR` | `Punch seller` matches an assessed supplier punch code | No | One whole triplet from that supplier's allowed set; trim surrounding whitespace and ignore case |",
+    "| `PN Level.Triplet COFOR` | `Punch seller` matches an assessed supplier punch code | No | One whole triplet from that supplier's allowed set; trim surrounding whitespace, treat Excel non-breaking spaces as spaces, and ignore case |",
 )
 
 EDCT_UNCHECKED_COLUMNS = (

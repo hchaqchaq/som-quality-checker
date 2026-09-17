@@ -33,6 +33,10 @@ def _normalized_choice(value: object) -> str:
     return _normalized_text(value).casefold()
 
 
+def _normalized_cofor(value: object) -> str:
+    return _normalized_text(value).replace("\u00a0", " ")
+
+
 def _is_valid_email(value: object) -> bool:
     text = _normalized_text(value)
     if not text:
@@ -154,7 +158,7 @@ def validate_suppliers(
 
         if effective_date_filled:
             for column in EDCT_COFOR_COLUMNS:
-                text = _normalized_text(value(row, column))
+                text = _normalized_cofor(value(row, column))
                 if text and COFOR_REGEX.fullmatch(text) is None:
                     fail(row, "cofor", column, "Invalid COFOR format")
 

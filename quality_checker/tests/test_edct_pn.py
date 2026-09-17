@@ -176,6 +176,25 @@ class EdctPnTests(EdctTestCase):
                 self.assertEqual(comment.count("'a, b/c'"), 1)
                 self.assertLess(comment.index("'a, b/c'"), comment.index("'unused'"))
 
+    def test_pn_triplet_treats_excel_non_breaking_spaces_as_spaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {
+                        "Supplier Punch code": "P1",
+                        "Triplet COFOR": "A00E0I\u00a0 01_A00E0I  01_A00E0I\u00a0 01",
+                        "OPEN TASK": "",
+                    },
+                    4: {"Triplet COFOR": "OTHER"},
+                },
+                pn_rows=(("P1", "A00E0I  01_A00E0I\u00a0 01_A00E0I  01"),),
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+
+        self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
+
     def test_pn_membership_retains_sheet_identity_and_combined_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

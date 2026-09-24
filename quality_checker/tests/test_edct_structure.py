@@ -105,7 +105,7 @@ class EdctStructureTests(EdctTestCase):
 
             self.assertEqual(
                 result.assessed_rows,
-                (("Supplier Level", 3), ("Supplier Level", 4), ("PN Level", 2), ("PN Level", 3)),
+                (("Supplier Level", 3), ("Supplier Level", 4), ("PN Level", 2), ("PN Level", 3), ("Template-Cofor-Creation", 3)),
             )
             self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
             self.assertEqual(result.row_results[("PN Level", 3)].check, 1)
@@ -155,10 +155,10 @@ class EdctStructureTests(EdctTestCase):
             )
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
-                self.assertEqual(result.assessed_rows, ())
-                self.assertEqual(result.rows_failed, 0)
+                self.assertEqual(result.assessed_rows, (("Template-Cofor-Creation", 3),))
+                self.assertEqual(result.rows_failed, 1)
                 self.assertEqual(
-                    connection.execute("SELECT rows_in_scope FROM runs").fetchone(), (0,)
+                    connection.execute("SELECT rows_in_scope FROM runs").fetchone(), (1,)
                 )
                 result.workbook.close()
             workbook = load_workbook(path)
@@ -252,6 +252,7 @@ class EdctStructureTests(EdctTestCase):
             template["D1"] = None
             template["D2"] = None
             template["D3"] = None
+            template["F2"] = "Company name"
             template["E2"] = "Punch Code"
             template["E3"] = "1003"
             workbook.save(path)
@@ -347,6 +348,7 @@ class EdctStructureTests(EdctTestCase):
 
             cofor_template = workbook.create_sheet("Template-Cofor-Creation")
             cofor_template["D2"] = "Punch Code"
+            cofor_template["E2"] = "Company name"
             cofor_template["D3"] = "9999"
 
             pn = workbook.create_sheet("PN Level")
@@ -388,7 +390,7 @@ class EdctStructureTests(EdctTestCase):
             )
             result.workbook.close()
 
-            self.assertEqual(len(result.assessed_rows), 3)
+            self.assertEqual(len(result.assessed_rows), 4)
             row_3 = result.row_results[("Supplier Level", 3)]
             self.assertGreater(row_3.check, 0)
             self.assertIn("Contact Commercial = invalid-email-format", row_3.comment)

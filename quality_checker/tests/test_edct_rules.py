@@ -367,7 +367,7 @@ class EdctRuleTests(EdctTestCase):
             self.assertIn(column, result.row_results[("Supplier Level", 3)].comment)
             self.assertIn(column, exported_comments[0])
         self.assertIn("OPEN TASK", exported_comments[1])
-        self.assertEqual(sum(row["fail_count"] for row in totals), 11)
+        self.assertEqual(sum(row["fail_count"] for row in totals), 12)
 
     def test_formula_structure_uses_formula_reference_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -74,7 +74,7 @@ class EdctExportTests(EdctTestCase):
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path, connection=connection)
                 self.addCleanup(result.workbook.close)
-                self.assertEqual(result.rows_failed, 2)
+                self.assertEqual(result.rows_failed, 3)
                 self.assertEqual(result.pn_values[2], ("P1", " a "))
                 self.assertEqual(result.row_results[("PN Level", 4)].check, 1)
                 output = export_edct_result(result, directory / "out")
@@ -87,6 +87,7 @@ class EdctExportTests(EdctTestCase):
                     "xl/worksheets/sheet1.xml",
                     "xl/worksheets/sheet42.xml",
                     "xl/tables/table27.xml",
+                    "xl/worksheets/sheet3.xml",
                     "xl/styles.xml",
                 }
                 for name in source.namelist():
@@ -155,9 +156,9 @@ class EdctExportTests(EdctTestCase):
             exported = load_workbook(output_path, data_only=False)
             supplier = exported["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
-            self.assertEqual(result.assessed_rows, (("Supplier Level", 3), ("Supplier Level", 4)))
+            self.assertEqual(result.assessed_rows, (("Supplier Level", 3), ("Supplier Level", 4), ("Template-Cofor-Creation", 3)))
             self.assertEqual([row["project"] for row in runs], ["eDCT"])
-            self.assertEqual([row["rows_total"] for row in runs], [2])
+            self.assertEqual([row["rows_total"] for row in runs], [3])
             self.assertEqual(
                 exported.sheetnames,
                 [
@@ -366,6 +367,7 @@ class EdctExportTests(EdctTestCase):
                     if name not in {
                         "xl/worksheets/sheet1.xml",
                         "xl/worksheets/sheet5.xml",
+                        "xl/worksheets/sheet3.xml",
                         "xl/tables/table1.xml",
                         "xl/styles.xml",
                     }:

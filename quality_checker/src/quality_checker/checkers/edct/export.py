@@ -22,7 +22,7 @@ from ...db.repository import (
     update_run_exported_file,
     update_run_status,
 )
-from .config import EDCT_DATE_COLUMNS, EDCT_HEADER_ROW, EDCT_PN_HEADER_ROW, EDCT_PN_SHEET
+from .config import EDCT_COFOR_TEMPLATE_HEADER_ROW, EDCT_COFOR_TEMPLATE_SHEET, EDCT_DATE_COLUMNS, EDCT_HEADER_ROW, EDCT_PN_HEADER_ROW, EDCT_PN_SHEET
 from .models import EdctLoadError, EdctRunResult
 from .ooxml import table_part as _table_part
 from .ooxml import worksheet_parts as _worksheet_parts
@@ -32,7 +32,7 @@ from .workbook import normalized_text as _normalized_text
 
 def _result_columns(worksheet, header_row: int = EDCT_HEADER_ROW) -> tuple[int, int]:
     headers = _header_map(worksheet, header_row)
-    if worksheet.title == EDCT_PN_SHEET:
+    if worksheet.title in (EDCT_PN_SHEET, EDCT_COFOR_TEMPLATE_SHEET):
         columns: list[int] = []
         for name in ("Check", "Comment"):
             column = headers.get(name)
@@ -338,6 +338,7 @@ def _export_edct_result(
     worksheets = (
         (result.workbook["Supplier Level"], EDCT_HEADER_ROW),
         (result.workbook[EDCT_PN_SHEET], EDCT_PN_HEADER_ROW),
+        (result.workbook[EDCT_COFOR_TEMPLATE_SHEET], EDCT_COFOR_TEMPLATE_HEADER_ROW),
     )
     result_columns: dict[str, tuple[int, int]] = {}
     for worksheet, header_row in worksheets:

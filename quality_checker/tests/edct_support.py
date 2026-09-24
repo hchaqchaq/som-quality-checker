@@ -69,6 +69,7 @@ def build_edct_workbook(
     if include_cofor_template:
         cofor_template = workbook.create_sheet("Template-Cofor-Creation")
         cofor_template["D2"] = "Punch Code"
+        cofor_template["E2"] = "Company name"
         cofor_template["D3"] = "9999"
     workbook.create_sheet("Other Sheet")["A1"] = "keep me"
     pn = workbook.create_sheet("PN Level")

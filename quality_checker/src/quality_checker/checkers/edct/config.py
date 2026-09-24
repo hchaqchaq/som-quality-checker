@@ -23,6 +23,7 @@ EDCT_INDEX_COLUMNS = (EDCT_INDEX_COLUMN, "Line")
 EDCT_COFOR_TEMPLATE_SHEET = "Template-Cofor-Creation"
 EDCT_COFOR_TEMPLATE_HEADER_ROW = 2
 EDCT_COFOR_TEMPLATE_PUNCH_HEADER = "Punch Code"
+EDCT_COFOR_TEMPLATE_COMPANY_HEADER = "Company name"
 EDCT_COFOR_REQUEST_DATE_COLUMN = "Creation of Cofors request date"
 
 EDCT_FORMULA_COLUMNS = (
@@ -83,6 +84,8 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated | Yes | Native Excel date or `DD/MM/YYYY` |",
     f"| `{EDCT_COFOR_REQUEST_DATE_COLUMN}` | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated | Conditional | Native Excel date or `DD/MM/YYYY` |",
     f"| `Supplier Punch code` | `{EDCT_COFOR_REQUEST_DATE_COLUMN}` is populated | No | Exact Punch Code from `Template-Cofor-Creation` column D, rows 3 onward |",
+    "| `Template-Cofor-Creation.Punch Code` | When populated | No | Must exist as a `Supplier Level.Supplier Punch code`, including supplier rows without an Index; trim spaces and normalize numeric Excel codes |",
+    "| `Template-Cofor-Creation.Company name` | When its Punch Code exists in Supplier Level | No | Must be nonblank and match at least one corresponding nonblank Supplier name, ignoring case and surrounding whitespace |",
     "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD/MM/YYYY`; today or earlier |",
     "| `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD/MM/YYYY: comment` |",
     "| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |",

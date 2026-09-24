@@ -19,6 +19,7 @@ from .config import EDCT_PN_SHEET, EDCT_PROJECT, EDCT_REQUIRED_COLUMNS
 from .models import EdctAssessedRow, EdctRunResult
 from .pn_validator import validate_pn
 from .settings import EdctHeaderSettings, load_edct_settings
+from .template_validator import validate_template
 from .validator import validate_suppliers
 from .workbook import load_edct_workbook
 
@@ -103,13 +104,19 @@ def run_edct_analysis(
             ("Supplier Level", row): row_result for row, row_result in supplier_results.items()
         }
         row_results.update(pn_results)
+        template_results, template_totals = validate_template(source)
+        row_results.update(template_results)
         rule_totals.update(pn_totals)
+        rule_totals.update(template_totals)
         assessed_rows = tuple(row_results)
         assessed_row_details: list[EdctAssessedRow] = []
         supplier_sheet = workbook["Supplier Level"]
         index_column = headers[source.supplier_index_header]
         for sheet_name, workbook_row in assessed_rows:
-            if sheet_name == EDCT_PN_SHEET:
+            if sheet_name == "Template-Cofor-Creation":
+                index = supplier_name = triplet = ""
+                punch = workbook[sheet_name].cell(workbook_row, cofor_template_column).value
+            elif sheet_name == EDCT_PN_SHEET:
                 punch, triplet = pn_values[workbook_row]
                 index = supplier_name = ""
             else:

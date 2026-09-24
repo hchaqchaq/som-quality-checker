@@ -267,6 +267,7 @@ class EdctPnTests(EdctTestCase):
                         ("Supplier Level", 4),
                         ("PN Level", 2),
                         ("PN Level", 3),
+                        ("Template-Cofor-Creation", 3),
                     ),
                 )
                 self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
@@ -274,14 +275,14 @@ class EdctPnTests(EdctTestCase):
                 self.assertEqual(rejected.check, 1)
                 for detail in ("Punch seller", "P1", "Triplet COFOR", "C", "a", "b"):
                     self.assertIn(detail, rejected.comment)
-                self.assertEqual(result.rows_failed, 3)
-                self.assertEqual(sum(row.check for row in result.row_results.values()), 3)
+                self.assertEqual(result.rows_failed, 4)
+                self.assertEqual(sum(row.check for row in result.row_results.values()), 4)
                 self.assertEqual(result.rule_totals[("pn_triplet_cofor", "Triplet COFOR")], 1)
                 self.assertEqual(
                     connection.execute(
                         "SELECT rows_total, rows_in_scope, rows_failed, status, exported_file FROM runs"
                     ).fetchone(),
-                    (4, 4, 3, "ok", None),
+                    (5, 5, 4, "ok", None),
                 )
                 output = export_edct_result(result, directory / "out")
                 self.assertEqual(

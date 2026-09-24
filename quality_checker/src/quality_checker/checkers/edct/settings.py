@@ -9,6 +9,7 @@ from openpyxl import load_workbook
 
 from ...application import DATA_DIR, ensure_data_dir
 from .config import (
+    EDCT_COFOR_TEMPLATE_COMPANY_HEADER,
     EDCT_COFOR_TEMPLATE_HEADER_ROW,
     EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
     EDCT_COFOR_TEMPLATE_SHEET,
@@ -43,7 +44,10 @@ def get_default_open_task_headers() -> dict[str, str]:
 
 
 def get_default_cofor_template_headers() -> dict[str, str]:
-    return {EDCT_COFOR_TEMPLATE_PUNCH_HEADER: EDCT_COFOR_TEMPLATE_PUNCH_HEADER}
+    return {
+        EDCT_COFOR_TEMPLATE_PUNCH_HEADER: EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
+        EDCT_COFOR_TEMPLATE_COMPANY_HEADER: EDCT_COFOR_TEMPLATE_COMPANY_HEADER,
+    }
 
 
 @dataclass(slots=True)

@@ -38,6 +38,44 @@ from quality_checker.checkers.edct.runner import run_edct_analysis
 
 
 class EdctExportTests(EdctTestCase):
+    def test_pn_annotations_follow_table_despite_distant_formatted_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            path = build_edct_workbook(directory, pn_rows=(("1003", "bad"),))
+            workbook = load_workbook(path)
+            pn = workbook["PN Level"]
+            pn.add_table(Table(displayName="NativePnData", ref="A1:B2"))
+            pn["AZ1"] = "Check"
+            pn["BA1"] = "Comment"
+            pn["AZ2"] = 99
+            pn["BA2"] = "stale"
+            workbook.save(path)
+            supplier_headers = [cell.value for cell in workbook["Supplier Level"][2]]
+            triplet_column = get_column_letter(supplier_headers.index("Triplet COFOR") + 1)
+            workbook.close()
+            set_formula_caches(
+                path,
+                {
+                    "xl/worksheets/sheet1.xml": {
+                        f"{triplet_column}3": "A",
+                        f"{triplet_column}4": "B",
+                    }
+                },
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                self.addCleanup(result.workbook.close)
+                output = export_edct_result(result, directory / "out")
+            exported = load_workbook(output)
+            self.addCleanup(exported.close)
+            sheet = exported["PN Level"]
+            self.assertEqual((sheet["C1"].value, sheet["D1"].value), ("Check", "Comment"))
+            self.assertEqual(sheet["C2"].value, result.row_results[("PN Level", 2)].check)
+            self.assertEqual(sheet["D2"].value, result.row_results[("PN Level", 2)].comment)
+            self.assertIsNone(sheet["AZ1"].value)
+            self.assertIsNone(sheet["BA2"].value)
+            self.assertEqual(sheet.tables["NativePnData"].ref, "A1:B2")
+
     def test_pn_formula_caches_tables_and_archive_parts_survive_export(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
@@ -156,7 +194,10 @@ class EdctExportTests(EdctTestCase):
             exported = load_workbook(output_path, data_only=False)
             supplier = exported["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
-            self.assertEqual(result.assessed_rows, (("Supplier Level", 3), ("Supplier Level", 4), ("Template-Cofor-Creation", 3)))
+            self.assertEqual(
+                result.assessed_rows,
+                (("Supplier Level", 3), ("Supplier Level", 4), ("Template-Cofor-Creation", 3)),
+            )
             self.assertEqual([row["project"] for row in runs], ["eDCT"])
             self.assertEqual([row["rows_total"] for row in runs], [3])
             self.assertEqual(

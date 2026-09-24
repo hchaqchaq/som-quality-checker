@@ -22,7 +22,14 @@ from ...db.repository import (
     update_run_exported_file,
     update_run_status,
 )
-from .config import EDCT_COFOR_TEMPLATE_HEADER_ROW, EDCT_COFOR_TEMPLATE_SHEET, EDCT_DATE_COLUMNS, EDCT_HEADER_ROW, EDCT_PN_HEADER_ROW, EDCT_PN_SHEET
+from .config import (
+    EDCT_COFOR_TEMPLATE_HEADER_ROW,
+    EDCT_COFOR_TEMPLATE_SHEET,
+    EDCT_DATE_COLUMNS,
+    EDCT_HEADER_ROW,
+    EDCT_PN_HEADER_ROW,
+    EDCT_PN_SHEET,
+)
 from .models import EdctLoadError, EdctRunResult
 from .ooxml import table_part as _table_part
 from .ooxml import worksheet_parts as _worksheet_parts
@@ -32,7 +39,24 @@ from .workbook import normalized_text as _normalized_text
 
 def _result_columns(worksheet, header_row: int = EDCT_HEADER_ROW) -> tuple[int, int]:
     headers = _header_map(worksheet, header_row)
-    if worksheet.title in (EDCT_PN_SHEET, EDCT_COFOR_TEMPLATE_SHEET):
+    if worksheet.title == EDCT_PN_SHEET:
+        table_end = max(
+            (range_boundaries(table.ref)[2] for table in worksheet.tables.values()),
+            default=0,
+        )
+        data_end = max(
+            (column for name, column in headers.items() if name not in ("Check", "Comment")),
+            default=0,
+        )
+        first = max(table_end, data_end) + 1
+        for offset, name in enumerate(("Check", "Comment")):
+            old_column = headers.get(name)
+            if old_column is not None and old_column != first + offset:
+                for row in range(header_row, worksheet.max_row + 1):
+                    worksheet.cell(row, old_column).value = None
+            worksheet.cell(header_row, first + offset, name)
+        return first, first + 1
+    if worksheet.title == EDCT_COFOR_TEMPLATE_SHEET:
         columns: list[int] = []
         for name in ("Check", "Comment"):
             column = headers.get(name)

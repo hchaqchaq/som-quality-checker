@@ -28,7 +28,7 @@ Results retain worksheet and source-row identity: `assessed_rows` contains `(wor
 
 One analysis run includes assessed rows and failed rows from both sheets. Rule/column totals count individual failures, not failed rows. Status `ok` means execution succeeded even when validation failures exist. Analysis history is recorded before export and updated with the exported path afterward.
 
-The exported workbook preserves the source values and worksheets. `Check` and `Comment` are added or replaced inside Supplier `Tabella2`, and on `PN Level` without resizing its existing tables. Stale annotations are cleared on rows no longer assessed.
+The exported workbook preserves the source values and worksheets. `Check` and `Comment` are added or replaced inside Supplier `Tabella2`. On `PN Level` they appear immediately after the rightmost data header or existing table, without resizing its tables; older distant annotations are removed. Stale annotations are cleared on rows no longer assessed.
 
 ## Configured column inventory
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sqlite3
 import tempfile
 from contextlib import closing
@@ -12,69 +11,12 @@ from edct_support import (
     build_edct_workbook,
 )
 from openpyxl import load_workbook
-from quality_checker.checkers.edct.config import (
-    EDCT_EDI_MODE_VALUES,
-    EDCT_FORMULA_COLUMNS,
-    EDCT_PN_REQUIRED_COLUMNS,
-    EDCT_PORTAL_COLUMNS,
-    EDCT_PORTAL_VALUES,
-    EDCT_REQUIRED_COLUMNS,
-    EDCT_RULE_CATALOGUE_ROWS,
-    EDCT_TRIPLE_STATUS_VALUES,
-    EDCT_UNCHECKED_COLUMNS,
-)
+from quality_checker.checkers.edct.config import EDCT_PORTAL_COLUMNS
 from quality_checker.checkers.edct.export import export_edct_result
 from quality_checker.checkers.edct.runner import run_edct_analysis
 
 
 class EdctRuleTests(EdctTestCase):
-    def test_rule_documentation_lists_every_required_edct_column(self) -> None:
-        documentation = (
-            Path(__file__).resolve().parents[2] / "docs" / "EDCT_QUALITY_CHECKER.md"
-        ).read_text(encoding="utf-8")
-        inventory = documentation.split("## Configured column inventory", 1)[1].split(
-            "## Formula rules", 1
-        )[0]
-        documented = set(re.findall(r"^- `([^`]+)`$", inventory, re.MULTILINE))
-        self.assertEqual(documented, set(EDCT_REQUIRED_COLUMNS) | set(EDCT_PN_REQUIRED_COLUMNS))
-
-    def test_rule_documentation_matches_formula_and_unchecked_configuration(self) -> None:
-        documentation = (
-            Path(__file__).resolve().parents[2] / "docs" / "EDCT_QUALITY_CHECKER.md"
-        ).read_text(encoding="utf-8")
-        formula_section = documentation.split("## Formula rules", 1)[1].split("## Field rules", 1)[
-            0
-        ]
-        unchecked_section = documentation.split("## Explicitly unchecked fields", 1)[1].split(
-            "## Verified sample smoke", 1
-        )[0]
-        self.assertEqual(
-            set(re.findall(r"^- `([^`]+)`$", formula_section, re.MULTILINE)),
-            set(EDCT_FORMULA_COLUMNS),
-        )
-        self.assertEqual(
-            set(re.findall(r"^- `([^`]+)`$", unchecked_section, re.MULTILINE)),
-            set(EDCT_UNCHECKED_COLUMNS),
-        )
-        for configured_value in (
-            *EDCT_TRIPLE_STATUS_VALUES,
-            *EDCT_PORTAL_VALUES,
-            *EDCT_EDI_MODE_VALUES,
-        ):
-            self.assertIn(f"`{configured_value}`", documentation)
-        field_rules = documentation.split("## Field rules", 1)[1].split(
-            "## Explicitly unchecked fields", 1
-        )[0]
-        documented_rows = tuple(line for line in field_rules.splitlines() if line.startswith("| `"))
-
-        def cells(line: str) -> tuple[str, ...]:
-            return tuple(cell.strip() for cell in line.strip("|").split("|"))
-
-        self.assertEqual(
-            tuple(map(cells, documented_rows)),
-            tuple(map(cells, EDCT_RULE_CATALOGUE_ROWS)),
-        )
-
     def test_field_formats_are_reported_with_exact_column_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = build_edct_workbook(

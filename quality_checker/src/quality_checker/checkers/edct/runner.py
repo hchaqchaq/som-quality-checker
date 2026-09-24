@@ -92,7 +92,7 @@ def run_edct_analysis(
         supplier_rows = source.supplier_rows
         cofor_template_column = source.cofor_template_column
         report("Checking PN Level…")
-        pn_results, pn_values = validate_pn(source)
+        pn_results, pn_values, pn_totals = validate_pn(source)
         report("Checking Supplier Level…")
         supplier_results, rule_totals = validate_suppliers(
             source,
@@ -103,10 +103,7 @@ def run_edct_analysis(
             ("Supplier Level", row): row_result for row, row_result in supplier_results.items()
         }
         row_results.update(pn_results)
-        pn_failures = sum(row_result.check for row_result in pn_results.values())
-        if pn_failures:
-            configured_pn_triplet = active_settings.get_header(EDCT_PN_SHEET, "Triplet COFOR")
-            rule_totals[("pn_triplet_cofor", configured_pn_triplet)] = pn_failures
+        rule_totals.update(pn_totals)
         assessed_rows = tuple(row_results)
         assessed_row_details: list[EdctAssessedRow] = []
         supplier_sheet = workbook["Supplier Level"]

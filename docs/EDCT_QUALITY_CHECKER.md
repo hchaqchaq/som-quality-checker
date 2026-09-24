@@ -6,12 +6,12 @@ The runtime source of truth is the eDCT Python configuration. The legacy
 ## Workbook boundary
 
 - Required worksheets: `Supplier Level`, `PN Level`, `Open Task`, and `Template-Cofor-Creation`.
-- `Supplier Level` headers are on row 2. `PN Level` headers are on row 1 and must include `Punch seller` and `Triplet COFOR`, as in the reference workbooks.
+- `Supplier Level` headers are on row 2. `PN Level` headers are on row 1 and must include `Punch seller` and `Triplet COFOR`; the four configured PN COFOR format fields are validated when present.
 - `Open Task` must contain `Punch Code` on row 2.
 - `Template-Cofor-Creation` must contain `Punch Code` on row 2; reference values are read from row 3 downward.
 - Supplier rows are assessed when `Index` is populated; `Line` is used only when the `Index` header is absent. A blank `Index` never falls back to `Line` on an individual row.
 - `Supplier Punch code` identifies the supplier for the cross-sheet rules.
-- PN rows are assessed when their nonblank `Punch seller` matches a punch code from assessed supplier rows. PN assessment does not require `Index` or `Line`; blank and unknown sellers are not assessed.
+- PN triplet membership is assessed when a nonblank `Punch seller` matches an assessed supplier punch code. PN COFOR format is assessed independently on rows with a populated configured COFOR field, including rows without a seller. Wholly blank rows are not assessed.
 - `Supplier name` is included in the result preview.
 - Export requires table `Tabella2` on `Supplier Level`; missing tables stop export after analysis.
 - PN export does not require a table or a fixed table name; existing PN tables retain their ranges and definitions.
@@ -32,7 +32,7 @@ The exported workbook preserves the source values and worksheets. `Check` and `C
 
 ## Configured column inventory
 
-This list is checked automatically against the executable configuration:
+Configured field names are listed below; the four PN COFOR format columns are optional workbook headers.
 
 - `Index`
 - `Triple Status`
@@ -83,6 +83,10 @@ This list is checked automatically against the executable configuration:
 - `OPEN TASK`
 - `EDI Mode`
 - `Punch seller`
+- `Shipper COFOR` (PN Level)
+- `Manufacturer COFOR` (PN Level)
+- `Seller COFOR` (PN Level)
+- `Empty return COFOR` (PN Level)
 
 ## Formula rules
 
@@ -138,6 +142,7 @@ Formula-valued identifiers use their saved calculated values from a companion `d
 | `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS`                                                                                                                     | Required after `Effective kick-off date`; optional before                                         |   Conditional | `YES` or `NOT`                                                                                                                              |
 | `EDI Mode`                                                                                                                                                                          | Required after `Cofor created date`; optional before                                              |   Conditional | `WEB EDI` or `Standard EDI`                                                                                                                 |
 | `OPEN TASK`                                                                                                                                                                         | Cross-checked for every assessed row                                                              |   Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise                                                                            |
+| `PN Level.Shipper COFOR`, `PN Level.Manufacturer COFOR`, `PN Level.Seller COFOR`, `PN Level.Empty return COFOR`                                                                     | When populated, including rows without a matching `Punch seller`                                  |           Yes | Six alphanumeric characters, two spaces, two alphanumeric characters; Excel non-breaking spaces count as spaces                             |
 | `PN Level.Triplet COFOR`                                                                                                                                                            | `Punch seller` matches an assessed supplier punch code                                            |            No | One whole triplet from that supplier's allowed set; trim surrounding whitespace, treat Excel non-breaking spaces as spaces, and ignore case |
 
 Choice comparisons trim surrounding whitespace and ignore case, except `Overseas`, which requires exact uppercase `YES` or `NOT`. The exported workbook retains original cell values and displays native dates in the eight validated date columns as `DD/MM/YYYY`.

@@ -13,6 +13,7 @@ from .config import (
     EDCT_COFOR_TEMPLATE_PUNCH_HEADER,
     EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_HEADER_ROW,
+    EDCT_PN_COFOR_COLUMNS,
     EDCT_PN_HEADER_ROW,
     EDCT_PN_REQUIRED_COLUMNS,
     EDCT_PN_SHEET,
@@ -34,7 +35,7 @@ def get_default_supplier_level_headers() -> dict[str, str]:
 
 
 def get_default_pn_level_headers() -> dict[str, str]:
-    return {column: column for column in EDCT_PN_REQUIRED_COLUMNS}
+    return {column: column for column in (*EDCT_PN_REQUIRED_COLUMNS, *EDCT_PN_COFOR_COLUMNS)}
 
 
 def get_default_open_task_headers() -> dict[str, str]:

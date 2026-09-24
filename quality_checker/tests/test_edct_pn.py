@@ -176,6 +176,54 @@ class EdctPnTests(EdctTestCase):
                 self.assertEqual(comment.count("'a, b/c'"), 1)
                 self.assertLess(comment.index("'a, b/c'"), comment.index("'unused'"))
 
+    def test_pn_cofor_format_assesses_each_populated_field_without_seller(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = build_edct_workbook(
+                Path(temp),
+                row_overrides={
+                    3: {"Supplier Punch code": "P1", "Triplet COFOR": "not-a-cofor"},
+                    4: {"Triplet COFOR": ""},
+                },
+                pn_rows=(("P1", "not-a-cofor"), (None, None), (None, None)),
+            )
+            workbook = load_workbook(path)
+            pn = workbook["PN Level"]
+            pn["C1"] = "Shipper COFOR"
+            pn["D1"] = "Manufacturer COFOR"
+            pn["E1"] = "Seller COFOR"
+            pn["F1"] = "Empty return COFOR"
+            pn["C2"] = "ABC123\u00a0 45"
+            pn["D2"] = "bad"
+            pn["E2"] = "ABC123  45"
+            pn["F2"] = "wrong"
+            pn["C3"] = "bad shipper"
+            pn["D3"] = "BAD"
+            pn["E3"] = "bad seller"
+            pn["F3"] = "A1B2C3  Z9"
+            pn["C4"] = "ABC123  45"
+            workbook.save(path)
+            workbook.close()
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path, connection=connection)
+                self.addCleanup(result.workbook.close)
+                self.assertEqual(result.row_results[("PN Level", 2)].check, 2)
+                self.assertIn(
+                    "Manufacturer COFOR = bad", result.row_results[("PN Level", 2)].comment
+                )
+                self.assertIn(
+                    "Empty return COFOR = wrong", result.row_results[("PN Level", 2)].comment
+                )
+                self.assertNotIn("Triplet COFOR", result.row_results[("PN Level", 2)].comment)
+                self.assertEqual(result.row_results[("PN Level", 3)].check, 3)
+                for field in ("Shipper COFOR", "Manufacturer COFOR", "Seller COFOR"):
+                    self.assertIn(field, result.row_results[("PN Level", 3)].comment)
+                self.assertEqual(result.row_results[("PN Level", 4)].check, 0)
+                self.assertEqual(result.rule_totals[("pn_cofor", "Manufacturer COFOR")], 2)
+                self.assertEqual(result.rule_totals[("pn_cofor", "Empty return COFOR")], 1)
+                self.assertEqual(result.rule_totals[("pn_cofor", "Shipper COFOR")], 1)
+                self.assertEqual(result.rule_totals[("pn_cofor", "Seller COFOR")], 1)
+                self.assertNotIn(("pn_triplet_cofor", "Triplet COFOR"), result.rule_totals)
+
     def test_pn_triplet_treats_excel_non_breaking_spaces_as_spaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = build_edct_workbook(

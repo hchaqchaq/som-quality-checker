@@ -14,6 +14,7 @@ from .config import (
     EDCT_COFOR_TEMPLATE_SHEET,
     EDCT_HEADER_ROW,
     EDCT_INDEX_COLUMN,
+    EDCT_PN_COFOR_COLUMNS,
     EDCT_PN_HEADER_ROW,
     EDCT_PN_REQUIRED_COLUMNS,
     EDCT_PN_SHEET,
@@ -241,6 +242,15 @@ def load_edct_workbook(
         resolved_settings = inspection.resolved_settings()
         supplier_headers = header_map(workbook[SUPPLIER_LEVEL_SHEET], EDCT_HEADER_ROW)
         pn_headers = header_map(workbook[EDCT_PN_SHEET], EDCT_PN_HEADER_ROW)
+        for canonical in EDCT_PN_COFOR_COLUMNS:
+            accepted = _accepted_names(settings, EDCT_PN_SHEET, canonical)
+            matches = [name for name in pn_headers if name.casefold() in accepted]
+            if len(matches) > 1:
+                raise EdctLoadError(
+                    f"Workbook rejected — ambiguous headers: {EDCT_PN_SHEET}.{canonical}"
+                )
+            if matches:
+                resolved_settings.pn_level[canonical] = matches[0]
         supplier_index_header = resolved_settings.get_header(
             SUPPLIER_LEVEL_SHEET, EDCT_INDEX_COLUMN
         )

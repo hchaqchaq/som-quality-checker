@@ -5,6 +5,12 @@ EDCT_PN_SHEET = "PN Level"
 EDCT_PN_HEADER_ROW = 1
 EDCT_PN_SELLER_COLUMN = "Punch seller"
 EDCT_PN_REQUIRED_COLUMNS = (EDCT_PN_SELLER_COLUMN, "Triplet COFOR")
+EDCT_PN_COFOR_COLUMNS = (
+    "Shipper COFOR",
+    "Manufacturer COFOR",
+    "Seller COFOR",
+    "Empty return COFOR",
+)
 EDCT_REQUIRED_SHEETS = (
     "Supplier Level",
     "Open Task",
@@ -85,6 +91,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS` | Required after `Effective kick-off date`; optional before | Conditional | `YES` or `NOT` |",
     "| `EDI Mode` | Required after `Cofor created date`; optional before | Conditional | `WEB EDI` or `Standard EDI` |",
     "| `OPEN TASK` | Cross-checked for every assessed row | Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise |",
+    "| `PN Level.Shipper COFOR`, `PN Level.Manufacturer COFOR`, `PN Level.Seller COFOR`, `PN Level.Empty return COFOR` | When populated, including rows without a matching `Punch seller` | Yes | Six alphanumeric characters, two spaces, two alphanumeric characters; Excel non-breaking spaces count as spaces |",
     "| `PN Level.Triplet COFOR` | `Punch seller` matches an assessed supplier punch code | No | One whole triplet from that supplier's allowed set; trim surrounding whitespace, treat Excel non-breaking spaces as spaces, and ignore case |",
 )
 

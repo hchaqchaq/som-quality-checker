@@ -70,7 +70,7 @@ EDCT_DATE_COLUMNS = (
     "DDE Validated date /sent to edi team",
 )
 
-EDCT_DATED_COMMENT_COLUMNS = ("Comments", "Kick-off comments", "Readiness Comments", "EDI Comments")
+EDCT_DATED_COMMENT_COLUMNS = ("Comments", "Kick-off comments", "Readiness Comments")
 
 EDCT_PORTAL_COLUMNS = ("eSupplierConnect", "B2B", "New supplier portal", "SPM", "iTMS")
 EDCT_TRIPLE_STATUS_VALUES = ("Valid", "No Valid")
@@ -87,7 +87,7 @@ EDCT_RULE_CATALOGUE_ROWS = (
     "| `Template-Cofor-Creation.Punch Code` | When populated | No | Must exist as a `Supplier Level.Supplier Punch code`, including supplier rows without an Index; trim spaces and normalize numeric Excel codes |",
     "| `Template-Cofor-Creation.Company name` | When its Punch Code exists in Supplier Level | No | Must be nonblank and match at least one corresponding nonblank Supplier name, ignoring case and surrounding whitespace |",
     "| `Effective kick-off date` | When populated | Yes | Native Excel date or `DD/MM/YYYY`; today or earlier |",
-    "| `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments` | When populated | Yes | `DD/MM/YYYY: comment` |",
+    "| `Comments`, `Kick-off comments`, `Readiness Comments` | When populated | Yes | `DD/MM/YYYY: comment` |",
     "| `Triple Status` | `Cofor created date` is populated | No | `Valid` or `No Valid` |",
     "| `Overseas` | Always | Yes | Exact `YES`, `NOT`, or empty after trimming surrounding whitespace |",
     "| `Supplier Confimation` | Always | Yes | `YES` |",
@@ -118,6 +118,7 @@ EDCT_UNCHECKED_COLUMNS = (
     "Seller/Manuf already in EQP",
     "Seller/Shipper already in EQP",
     "EDI already known",
+    "EDI Comments",
     "Plants",
     "Incoterm",
     "Planned Kick-off week",

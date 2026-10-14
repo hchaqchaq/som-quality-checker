@@ -428,3 +428,23 @@ class EdctRuleTests(EdctTestCase):
 
         self.assertEqual(result.row_results[("Supplier Level", 3)].check, 1)
         self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
+
+    def test_edi_comments_is_unchecked_and_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dir_with_col = Path(temp) / "with_col"
+            dir_with_col.mkdir()
+            path_with_col = build_edct_workbook(
+                dir_with_col,
+                optional_columns=("EDI Comments",),
+                row_overrides={3: {"EDI Comments": "Arbitrary comment without date format"}},
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path_with_col, connection=connection)
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+
+            dir_without_col = Path(temp) / "without_col"
+            dir_without_col.mkdir()
+            path_without_col = build_edct_workbook(dir_without_col)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result2 = run_edct_analysis(path_without_col, connection=connection)
+            self.assertEqual(result2.row_results[("Supplier Level", 3)].check, 0)

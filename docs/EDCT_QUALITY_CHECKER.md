@@ -72,7 +72,6 @@ Configured field names are listed below; the four PN COFOR format columns are op
 - `Comments`
 - `Kick-off comments`
 - `Readiness Comments`
-- `EDI Comments`
 - `eSupplierConnect`
 - `B2B`
 - `New supplier portal`
@@ -135,7 +134,7 @@ Formula-valued identifiers use their saved calculated values from a companion `d
 | `Creation of Cofors request date`                                                                                                                                                   | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated |   Conditional | Native Excel date or `DD/MM/YYYY`                                                                                                           |
 | `Supplier Punch code`                                                                                                                                                               | `Creation of Cofors request date` is populated                                                    |            No | Exact Punch Code from `Template-Cofor-Creation` column D, rows 3 onward                                                                     |
 | `Effective kick-off date`                                                                                                                                                           | When populated                                                                                    |           Yes | Native Excel date or `DD/MM/YYYY`; today or earlier                                                                                         |
-| `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments`                                                                                                               | When populated                                                                                    |           Yes | `DD/MM/YYYY: comment`                                                                                                                       |
+| `Comments`, `Kick-off comments`, `Readiness Comments`                                                                                                                               | When populated                                                                                    |           Yes | `DD/MM/YYYY: comment`                                                                                                                       |
 | `Triple Status`                                                                                                                                                                     | `Cofor created date` is populated                                                                 |            No | `Valid` or `No Valid`                                                                                                                       |
 | `Overseas`                                                                                                                                                                          | Always                                                                                            |           Yes | Exact `YES`, `NOT`, or empty after trimming surrounding whitespace                                                                          |
 | `Supplier Confimation`                                                                                                                                                              | Always                                                                                            |           Yes | `YES`                                                                                                                                       |
@@ -170,6 +169,7 @@ These legacy source fields remain unchanged and do not add failures:
 - `Seller/Manuf already in EQP`
 - `Seller/Shipper already in EQP`
 - `EDI already known`
+- `EDI Comments`
 - `Plants`
 - `Incoterm`
 - `Planned Kick-off week`
@@ -213,7 +213,7 @@ Run history records one failure total per rule and field. Zero-failure rule/fiel
 | `cofor`                 | `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor`            |
 | `date`                  | Every configured date column when its populated value has an invalid format     |
 | `date_future`           | `Effective kick-off date` when later than the analysis date                     |
-| `dated_comment`         | `Comments`, `Kick-off comments`, `Readiness Comments`, `EDI Comments`           |
+| `dated_comment`         | `Comments`, `Kick-off comments`, `Readiness Comments`                           |
 | `triple_status`         | `Triple Status`                                                                 |
 | `overseas`              | `Overseas`                                                                      |
 | `supplier_confirmation` | `Supplier Confimation`                                                          |

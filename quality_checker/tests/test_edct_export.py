@@ -510,7 +510,6 @@ class EdctExportTests(EdctTestCase):
             "New supplier portal": "YES",
             "SPM": "YES",
             "iTMS": "YES",
-            "EDI Mode": "WEB EDI",
             "OPEN TASK": "YES",
         }
         expected_columns = (

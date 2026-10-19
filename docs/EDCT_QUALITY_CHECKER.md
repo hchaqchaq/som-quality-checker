@@ -55,7 +55,6 @@ Configured field names are listed below; the four PN COFOR format columns are op
 - `Logistic specialist Contact`
 - `Transport manager`
 - `Packaging Specialist`
-- `EDI Contact`
 - `Participants`
 - `Seller COFOR`
 - `Manufacturer COFOR`
@@ -80,7 +79,6 @@ Configured field names are listed below; the four PN COFOR format columns are op
 - `Overseas`
 - `Supplier Confimation`
 - `OPEN TASK`
-- `EDI Mode`
 - `Punch seller`
 - `Shipper COFOR` (PN Level)
 - `Manufacturer COFOR` (PN Level)
@@ -128,7 +126,7 @@ Formula-valued identifiers use their saved calculated values from a companion `d
 | Fields                                                                                                                                                                              | Applies when                                                                                      | Empty allowed | Accepted value                                                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Sales contact`, `Logistic contact`                                                                                                                                                 | `Effective kick-off date` is populated                                                            |           Yes | Plain emails separated by `;`; trailing semicolons are ignored                                                                              |
-| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `EDI Contact`, `Participants`       | When populated                                                                                    |           Yes | Plain emails separated by `;`; trailing semicolons are ignored                                                                              |
+| `Plant Manager`, `Logistic Manager contact`, `Key Account Contact`, `Logistic specialist Contact`, `Transport manager`, `Packaging Specialist`, `Participants`                      | When populated                                                                                    |           Yes | Plain emails separated by `;`; trailing semicolons are ignored                                                                              |
 | `Seller COFOR`, `Manufacturer COFOR`, `Shipper COFOR`, `Empty Cofor`                                                                                                                | `Effective kick-off date` is populated                                                            |           Yes | Six alphanumeric characters, two spaces, two alphanumeric characters; Excel non-breaking spaces count as spaces                             |
 | `First communication sent`, `Planned Kick-off meeting`, `Kick-off Invitation sent`, `Kick-off meeting postponed date`, `Cofor created date`, `DDE Validated date /sent to edi team` | When populated                                                                                    |           Yes | Native Excel date or `DD/MM/YYYY`                                                                                                           |
 | `Creation of Cofors request date`                                                                                                                                                   | Required when `Supplier Punch code` exists in `Template-Cofor-Creation`; otherwise when populated |   Conditional | Native Excel date or `DD/MM/YYYY`                                                                                                           |
@@ -139,7 +137,6 @@ Formula-valued identifiers use their saved calculated values from a companion `d
 | `Overseas`                                                                                                                                                                          | Always                                                                                            |           Yes | Exact `YES`, `NOT`, or empty after trimming surrounding whitespace                                                                          |
 | `Supplier Confimation`                                                                                                                                                              | Always                                                                                            |           Yes | `YES`                                                                                                                                       |
 | `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS`                                                                                                                     | Required after `Effective kick-off date`; optional before                                         |   Conditional | `YES` or `NOT`                                                                                                                              |
-| `EDI Mode`                                                                                                                                                                          | Required after `Cofor created date`; optional before                                              |   Conditional | `WEB EDI` or `Standard EDI`                                                                                                                 |
 | `OPEN TASK`                                                                                                                                                                         | Cross-checked for every assessed row                                                              |   Conditional | `YES` when the punch code exists in `Open Task`; empty otherwise                                                                            |
 | `PN Level.Shipper COFOR`, `PN Level.Manufacturer COFOR`, `PN Level.Seller COFOR`, `PN Level.Empty return COFOR`                                                                     | When populated, including rows without a matching `Punch seller`                                  |           Yes | Six alphanumeric characters, two spaces, two alphanumeric characters; Excel non-breaking spaces count as spaces                             |
 | `PN Level.Triplet COFOR`                                                                                                                                                            | `Punch seller` matches an assessed supplier punch code                                            |            No | One whole triplet from that supplier's allowed set; trim surrounding whitespace, treat Excel non-breaking spaces as spaces, and ignore case |
@@ -170,6 +167,8 @@ These legacy source fields remain unchanged and do not add failures:
 - `Seller/Shipper already in EQP`
 - `EDI already known`
 - `EDI Comments`
+- `EDI Contact`
+- `EDI Mode`
 - `Plants`
 - `Incoterm`
 - `Planned Kick-off week`
@@ -218,7 +217,6 @@ Run history records one failure total per rule and field. Zero-failure rule/fiel
 | `overseas`              | `Overseas`                                                                      |
 | `supplier_confirmation` | `Supplier Confimation`                                                          |
 | `portal`                | `eSupplierConnect`, `B2B`, `New supplier portal`, `SPM`, `iTMS`                 |
-| `edi_mode`              | `EDI Mode`                                                                      |
 | `date_required`         | `Creation of Cofors request date` when required by `Template-Cofor-Creation`    |
 | `cofor_template`        | `Supplier Punch code` when a request date is populated without a template match |
 | `open_task`             | `OPEN TASK` for both matching and non-matching `Open Task` punch codes          |

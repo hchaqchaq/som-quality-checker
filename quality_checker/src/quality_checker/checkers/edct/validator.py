@@ -11,7 +11,6 @@ from .config import (
     EDCT_COFOR_REQUEST_DATE_COLUMN,
     EDCT_DATE_COLUMNS,
     EDCT_DATED_COMMENT_COLUMNS,
-    EDCT_EDI_MODE_VALUES,
     EDCT_EMAIL_COLUMNS,
     EDCT_FORMULA_COLUMNS,
     EDCT_PORTAL_COLUMNS,
@@ -118,7 +117,6 @@ def validate_suppliers(
     open_task_punches = source.open_task_punches()
     triple_status_values = {item.casefold() for item in EDCT_TRIPLE_STATUS_VALUES}
     portal_values = {item.casefold() for item in EDCT_PORTAL_VALUES}
-    edi_mode_values = {item.casefold() for item in EDCT_EDI_MODE_VALUES}
     cofor_template_punches = source.cofor_template_punches()
     if assessed_rows:
         reference_row = assessed_rows[0]
@@ -199,11 +197,6 @@ def validate_suppliers(
             allowed = portal_values if effective_date_filled else {"", *portal_values}
             if portal_value not in allowed:
                 fail(row, "portal", column, "Required value must be YES or NOT")
-
-        edi_mode = _normalized_choice(value(row, "EDI Mode"))
-        allowed_edi_modes = edi_mode_values if cofor_date_filled else {"", *edi_mode_values}
-        if edi_mode not in allowed_edi_modes:
-            fail(row, "edi_mode", "EDI Mode", "Required value must be WEB EDI or Standard EDI")
 
         request_date_filled = bool(_normalized_text(value(row, EDCT_COFOR_REQUEST_DATE_COLUMN)))
         punch_in_cofor_template = (

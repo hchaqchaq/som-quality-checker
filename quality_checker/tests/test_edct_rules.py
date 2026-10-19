@@ -272,7 +272,6 @@ class EdctRuleTests(EdctTestCase):
                 {
                     "Cofor created date": "30/07/2026",
                     "Triple Status": "",
-                    "EDI Mode": "WEB EDI",
                 },
                 1,
             ),
@@ -287,16 +286,6 @@ class EdctRuleTests(EdctTestCase):
                 "portals required after trigger",
                 {"Effective kick-off date": "30/07/2026"},
                 len(EDCT_PORTAL_COLUMNS),
-            ),
-            ("edi mode before trigger", {"EDI Mode": ""}, 0),
-            (
-                "edi mode after trigger",
-                {
-                    "Cofor created date": "30/07/2026",
-                    "Triple Status": "Valid",
-                    "EDI Mode": "",
-                },
-                1,
             ),
         )
         for label, overrides, expected_check in scenarios:
@@ -319,7 +308,6 @@ class EdctRuleTests(EdctTestCase):
                     3: {
                         "Cofor created date": "invalid date",
                         "Triple Status": "",
-                        "EDI Mode": "",
                         "Effective kick-off date": "30/07/2026",
                         "Overseas": "YES",
                         "Supplier Confimation": "NO",
@@ -350,12 +338,11 @@ class EdctRuleTests(EdctTestCase):
             ]
             exported.close()
 
-        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 10)
+        self.assertEqual(result.row_results[("Supplier Level", 3)].check, 9)
         self.assertEqual(result.row_results[("Supplier Level", 4)].check, 1)
-        self.assertEqual(exported_checks, [10, 1])
+        self.assertEqual(exported_checks, [9, 1])
         for column in (
             "Triple Status",
-            "EDI Mode",
             "Supplier Confimation",
             "OPEN TASK",
             "eSupplierConnect",
@@ -367,7 +354,7 @@ class EdctRuleTests(EdctTestCase):
             self.assertIn(column, result.row_results[("Supplier Level", 3)].comment)
             self.assertIn(column, exported_comments[0])
         self.assertIn("OPEN TASK", exported_comments[1])
-        self.assertEqual(sum(row["fail_count"] for row in totals), 12)
+        self.assertEqual(sum(row["fail_count"] for row in totals), 11)
 
     def test_formula_structure_uses_formula_reference_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -437,6 +424,56 @@ class EdctRuleTests(EdctTestCase):
                 dir_with_col,
                 optional_columns=("EDI Comments",),
                 row_overrides={3: {"EDI Comments": "Arbitrary comment without date format"}},
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(path_with_col, connection=connection)
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+
+            dir_without_col = Path(temp) / "without_col"
+            dir_without_col.mkdir()
+            path_without_col = build_edct_workbook(dir_without_col)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result2 = run_edct_analysis(path_without_col, connection=connection)
+            self.assertEqual(result2.row_results[("Supplier Level", 3)].check, 0)
+
+    def test_edi_mode_is_unchecked_and_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dir_with_col = Path(temp) / "with_col"
+            dir_with_col.mkdir()
+            path_with_col = build_edct_workbook(
+                dir_with_col,
+                optional_columns=("EDI Mode",),
+                row_overrides={
+                    3: {
+                        "Cofor created date": "30/07/2026",
+                        "Triple Status": "Valid",
+                        "EDI Mode": "Invalid EDI Mode",
+                    }
+                },
+            )
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result = run_edct_analysis(
+                    path_with_col,
+                    connection=connection,
+                    analysis_date=date(2026, 7, 30),
+                )
+            self.assertEqual(result.row_results[("Supplier Level", 3)].check, 0)
+
+            dir_without_col = Path(temp) / "without_col"
+            dir_without_col.mkdir()
+            path_without_col = build_edct_workbook(dir_without_col)
+            with closing(sqlite3.connect(":memory:")) as connection:
+                result2 = run_edct_analysis(path_without_col, connection=connection)
+            self.assertEqual(result2.row_results[("Supplier Level", 3)].check, 0)
+
+    def test_edi_contact_is_unchecked_and_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dir_with_col = Path(temp) / "with_col"
+            dir_with_col.mkdir()
+            path_with_col = build_edct_workbook(
+                dir_with_col,
+                optional_columns=("EDI Contact",),
+                row_overrides={3: {"EDI Contact": "not an email"}},
             )
             with closing(sqlite3.connect(":memory:")) as connection:
                 result = run_edct_analysis(path_with_col, connection=connection)

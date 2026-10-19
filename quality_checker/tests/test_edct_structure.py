@@ -105,7 +105,13 @@ class EdctStructureTests(EdctTestCase):
 
             self.assertEqual(
                 result.assessed_rows,
-                (("Supplier Level", 3), ("Supplier Level", 4), ("PN Level", 2), ("PN Level", 3), ("Template-Cofor-Creation", 3)),
+                (
+                    ("Supplier Level", 3),
+                    ("Supplier Level", 4),
+                    ("PN Level", 2),
+                    ("PN Level", 3),
+                    ("Template-Cofor-Creation", 3),
+                ),
             )
             self.assertEqual(result.row_results[("PN Level", 2)].check, 0)
             self.assertEqual(result.row_results[("PN Level", 3)].check, 1)
@@ -175,12 +181,12 @@ class EdctStructureTests(EdctTestCase):
             workbook = load_workbook(path)
             supplier = workbook["Supplier Level"]
             headers = [cell.value for cell in supplier[2]]
-            supplier.cell(2, headers.index("EDI Mode") + 1).value = None
+            supplier.cell(2, headers.index("OPEN TASK") + 1).value = None
             workbook.save(path)
             workbook.close()
             connection = sqlite3.connect(":memory:")
             try:
-                with self.assertRaisesRegex(EdctLoadError, "Open Task.*EDI Mode"):
+                with self.assertRaisesRegex(EdctLoadError, "Open Task.*OPEN TASK"):
                     run_edct_analysis(path, connection=connection)
             finally:
                 connection.close()
